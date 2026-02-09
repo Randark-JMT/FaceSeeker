@@ -38,14 +38,25 @@ class FaceCluster:
         self.db = db
         self.recognizer = recognizer
 
-    def cluster(self, cosine_threshold: float = 0.363) -> dict[int, list[int]]:
+    def cluster(self, cosine_threshold: float = 0.363,
+                progress_cb=None) -> dict[int, list[int]]:
         """
         对数据库中所有有特征的人脸进行聚类。
+
+        Args:
+            cosine_threshold: 余弦相似度阈值
+            progress_cb: 进度回调 (current, total, stage_text)
 
         Returns:
             {person_id: [face_id, ...]} 聚类结果
         """
+
+        def _report(current, total, text):
+            if progress_cb:
+                progress_cb(current, total, text)
+
         # 清除旧的归类
+        _report(0, 1, "清除旧归类数据...")
         self.db.clear_all_persons()
 
         rows = self.db.get_all_faces_with_features()
@@ -60,9 +71,13 @@ class FaceCluster:
             feat = DatabaseManager.feature_from_blob(row["feature"])
             features.append(feat)
 
+        n = len(face_ids)
+        total_pairs = n * (n - 1) // 2
+        _report(0, total_pairs, f"加载 {n} 张人脸，开始两两比对 ({total_pairs} 对)...")
+
         # Union-Find 聚类
         uf = UnionFind()
-        n = len(face_ids)
+        pair_count = 0
         for i in range(n):
             for j in range(i + 1, n):
                 score = float(self.recognizer.match(
@@ -71,12 +86,19 @@ class FaceCluster:
                 ))
                 if score >= cosine_threshold:
                     uf.union(face_ids[i], face_ids[j])
+                pair_count += 1
+                if pair_count % 500 == 0 or pair_count == total_pairs:
+                    _report(pair_count, total_pairs,
+                            f"比对进度: {pair_count}/{total_pairs}")
 
         # 收集分组
         groups: dict[int, list[int]] = defaultdict(list)
         for fid in face_ids:
             root = uf.find(fid)
             groups[root].append(fid)
+
+        _report(total_pairs, total_pairs,
+                f"比对完成，正在写入 {len(groups)} 个人物分组...")
 
         # 写入数据库
         result: dict[int, list[int]] = {}

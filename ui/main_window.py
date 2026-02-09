@@ -105,6 +105,7 @@ class DetectWorker(QThread):
 class ClusterWorker(QThread):
     """后台聚类线程"""
 
+    progress = Signal(int, int, str)  # current, total, stage_text
     finished_cluster = Signal(dict)
 
     def __init__(self, cluster: FaceCluster, threshold: float = 0.363):
@@ -113,7 +114,10 @@ class ClusterWorker(QThread):
         self.threshold = threshold
 
     def run(self):
-        result = self.cluster_engine.cluster(self.threshold)
+        result = self.cluster_engine.cluster(
+            self.threshold,
+            progress_cb=lambda cur, tot, txt: self.progress.emit(cur, tot, txt),
+        )
         self.finished_cluster.emit(result)
 
 
@@ -326,11 +330,27 @@ class MainWindow(QMainWindow):
         self._statusbar.showMessage("正在进行人脸归类...")
         self._set_actions_enabled(False)
 
+        n = len(faces)
+        total_pairs = n * (n - 1) // 2
+        self._cluster_progress = QProgressDialog(
+            f"正在归类 {n} 张人脸...", None, 0, max(total_pairs, 1), self
+        )
+        self._cluster_progress.setWindowTitle("人脸归类")
+        self._cluster_progress.setWindowModality(Qt.WindowModality.WindowModal)
+        self._cluster_progress.setMinimumDuration(0)
+        self._cluster_progress.setValue(0)
+
         worker = ClusterWorker(self.cluster_engine)
+        worker.progress.connect(self._on_cluster_progress)
         worker.finished_cluster.connect(self._on_cluster_done)
         worker.finished.connect(worker.deleteLater)
         self._worker = worker
         worker.start()
+
+    def _on_cluster_progress(self, current: int, total: int, text: str):
+        self._cluster_progress.setMaximum(max(total, 1))
+        self._cluster_progress.setValue(current)
+        self._cluster_progress.setLabelText(text)
 
     def _on_clear_all(self):
         ret = QMessageBox.question(
@@ -382,6 +402,7 @@ class MainWindow(QMainWindow):
             self._image_list.setCurrentRow(0)
 
     def _on_cluster_done(self, result: dict):
+        self._cluster_progress.close()
         self._set_actions_enabled(True)
         person_count = len(result)
         face_count = sum(len(v) for v in result.values())
