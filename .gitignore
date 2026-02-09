@@ -1,2 +1,4 @@
 faceseeker.db
 **/__pycache__/
+dist/
+build/
