@@ -4,13 +4,16 @@ import cv2
 import numpy as np
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QScrollArea,
-    QFrame, QLineEdit,
+    QFrame, QLineEdit, QApplication,
 )
 from PySide6.QtGui import QImage, QPixmap
 from PySide6.QtCore import Qt, Signal
 
 from core.database import DatabaseManager
 from core.face_engine import FaceEngine, imread_unicode
+
+# 每个人物分组最多显示的缩略图数量
+MAX_THUMBS_PER_GROUP = 8
 
 
 class PersonGroup(QFrame):
@@ -42,44 +45,58 @@ class PersonGroup(QFrame):
         header.addStretch()
         layout.addLayout(header)
 
-        # 人脸缩略图流式布局
+        # 人脸缩略图（限制数量，避免阻塞主线程）
         thumb_layout = QHBoxLayout()
         thumb_layout.setSpacing(4)
-        for row in face_rows:
-            thumb_label = QLabel()
-            thumb_label.setFixedSize(56, 56)
-            thumb_label.setStyleSheet("border: 1px solid #555;")
-            thumb_label.setToolTip(f"来源: {row['filename']}")
-
-            # 加载图像并裁剪人脸
-            img = imread_unicode(row["file_path"])
-            if img is not None:
-                bbox = (row["bbox_x"], row["bbox_y"], row["bbox_w"], row["bbox_h"])
-                crop = FaceEngine.crop_face(img, bbox)
-                pix = self._cv_to_pixmap(crop, 56, 56)
-                thumb_label.setPixmap(pix)
-            else:
-                thumb_label.setText("?")
-                thumb_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-
+        shown = face_rows[:MAX_THUMBS_PER_GROUP]
+        for row in shown:
+            thumb_label = self._make_thumb(row)
             thumb_layout.addWidget(thumb_label)
+
+        overflow = len(face_rows) - len(shown)
+        if overflow > 0:
+            more_label = QLabel(f"+{overflow}")
+            more_label.setFixedSize(56, 56)
+            more_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            more_label.setStyleSheet(
+                "border: 1px solid #555; color: #aaa; font-size: 14px;"
+            )
+            thumb_layout.addWidget(more_label)
 
         thumb_layout.addStretch()
         layout.addLayout(thumb_layout)
 
+    @staticmethod
+    def _make_thumb(row) -> QLabel:
+        thumb_label = QLabel()
+        thumb_label.setFixedSize(56, 56)
+        thumb_label.setStyleSheet("border: 1px solid #555;")
+        thumb_label.setToolTip(f"来源: {row['filename']}")
+
+        img = imread_unicode(row["file_path"])
+        if img is not None:
+            bbox = (row["bbox_x"], row["bbox_y"], row["bbox_w"], row["bbox_h"])
+            crop = FaceEngine.crop_face(img, bbox)
+            pix = _cv_to_pixmap(crop, 56, 56)
+            thumb_label.setPixmap(pix)
+        else:
+            thumb_label.setText("?")
+            thumb_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        return thumb_label
+
     def _on_name_changed(self):
         self.name_changed.emit(self.person_id, self._name_edit.text().strip())
 
-    @staticmethod
-    def _cv_to_pixmap(cv_img: np.ndarray, w: int, h: int) -> QPixmap:
-        rgb = cv2.cvtColor(cv_img, cv2.COLOR_BGR2RGB)
-        ih, iw, ch = rgb.shape
-        qimg = QImage(rgb.data, iw, ih, ch * iw, QImage.Format.Format_RGB888)
-        return QPixmap.fromImage(qimg).scaled(
-            w, h,
-            Qt.AspectRatioMode.KeepAspectRatio,
-            Qt.TransformationMode.SmoothTransformation,
-        )
+
+def _cv_to_pixmap(cv_img: np.ndarray, w: int, h: int) -> QPixmap:
+    rgb = cv2.cvtColor(cv_img, cv2.COLOR_BGR2RGB)
+    ih, iw, ch = rgb.shape
+    qimg = QImage(rgb.data, iw, ih, ch * iw, QImage.Format.Format_RGB888)
+    return QPixmap.fromImage(qimg).scaled(
+        w, h,
+        Qt.AspectRatioMode.KeepAspectRatio,
+        Qt.TransformationMode.SmoothTransformation,
+    )
 
 
 class PersonPanel(QWidget):
@@ -107,7 +124,7 @@ class PersonPanel(QWidget):
         layout.addWidget(scroll)
 
     def refresh(self):
-        """从数据库重新加载人物分组"""
+        """从数据库重新加载人物分组（逐个添加，保持 UI 响应）"""
         # 清空
         while self._container_layout.count():
             item = self._container_layout.takeAt(0)
@@ -122,13 +139,16 @@ class PersonPanel(QWidget):
             self._container_layout.addWidget(placeholder)
             return
 
-        for person in persons:
+        for i, person in enumerate(persons):
             face_rows = self.db.get_faces_by_person(person["id"])
             if not face_rows:
                 continue
             group = PersonGroup(person["id"], person["name"], face_rows)
             group.name_changed.connect(self._on_name_changed)
             self._container_layout.addWidget(group)
+            # 每添加几个分组就让 Qt 事件循环处理一次，避免长时间冻结
+            if (i + 1) % 3 == 0:
+                QApplication.processEvents()
 
     def _on_name_changed(self, person_id: int, new_name: str):
         if new_name:

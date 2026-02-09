@@ -12,6 +12,7 @@ class DatabaseManager:
     def __init__(self, db_path: str = "faceseeker.db"):
         self.db_path = db_path
         self.conn: Optional[sqlite3.Connection] = None
+        self._auto_commit = True
         self._connect()
         self._init_db()
 
@@ -21,6 +22,11 @@ class DatabaseManager:
         self.conn.execute("PRAGMA foreign_keys = ON")
         self.conn.execute("PRAGMA journal_mode = WAL")
 
+    def _maybe_commit(self):
+        """仅在非事务模式下自动提交"""
+        if self._auto_commit:
+            self.conn.commit()
+
     def _init_db(self):
         """建表"""
         self.conn.executescript("""
@@ -28,6 +34,7 @@ class DatabaseManager:
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 file_path TEXT NOT NULL UNIQUE,
                 filename TEXT NOT NULL,
+                relative_path TEXT,
                 width INTEGER,
                 height INTEGER,
                 face_count INTEGER DEFAULT 0,
@@ -66,12 +73,12 @@ class DatabaseManager:
         ).fetchone()
         return row is not None
 
-    def add_image(self, file_path: str, filename: str, width: int, height: int, face_count: int = 0) -> int:
+    def add_image(self, file_path: str, filename: str, width: int, height: int, face_count: int = 0, relative_path: str = "") -> int:
         cur = self.conn.execute(
-            "INSERT INTO images (file_path, filename, width, height, face_count) VALUES (?, ?, ?, ?, ?)",
-            (file_path, filename, width, height, face_count),
+            "INSERT INTO images (file_path, filename, relative_path, width, height, face_count) VALUES (?, ?, ?, ?, ?, ?)",
+            (file_path, filename, relative_path, width, height, face_count),
         )
-        self.conn.commit()
+        self._maybe_commit()
         return cur.lastrowid
 
     def get_all_images(self) -> list:
@@ -88,11 +95,11 @@ class DatabaseManager:
         self.conn.execute(
             "UPDATE images SET face_count = ? WHERE id = ?", (face_count, image_id)
         )
-        self.conn.commit()
+        self._maybe_commit()
 
     def delete_image(self, image_id: int):
         self.conn.execute("DELETE FROM images WHERE id = ?", (image_id,))
-        self.conn.commit()
+        self._maybe_commit()
 
     # ---- Faces ----
 
@@ -112,7 +119,7 @@ class DatabaseManager:
             "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (image_id, bbox[0], bbox[1], bbox[2], bbox[3], landmarks_json, score, feature_blob, person_id),
         )
-        self.conn.commit()
+        self._maybe_commit()
         return cur.lastrowid
 
     def get_faces_by_image(self, image_id: int) -> list:
@@ -130,7 +137,7 @@ class DatabaseManager:
         self.conn.execute(
             "UPDATE faces SET person_id = ? WHERE id = ?", (person_id, face_id)
         )
-        self.conn.commit()
+        self._maybe_commit()
 
     def get_face(self, face_id: int):
         return self.conn.execute(
@@ -152,7 +159,7 @@ class DatabaseManager:
         cur = self.conn.execute(
             "INSERT INTO persons (name) VALUES (?)", (name,)
         )
-        self.conn.commit()
+        self._maybe_commit()
         return cur.lastrowid
 
     def get_all_persons(self) -> list:
@@ -172,19 +179,35 @@ class DatabaseManager:
         self.conn.execute(
             "UPDATE persons SET name = ? WHERE id = ?", (name, person_id)
         )
-        self.conn.commit()
+        self._maybe_commit()
 
     def update_person_face_count(self, person_id: int, count: int):
         self.conn.execute(
             "UPDATE persons SET face_count = ? WHERE id = ?", (count, person_id)
         )
-        self.conn.commit()
+        self._maybe_commit()
 
     def clear_all_persons(self):
         """清除所有人物归类（重新聚类前调用）"""
         self.conn.execute("UPDATE faces SET person_id = NULL")
         self.conn.execute("DELETE FROM persons")
+        self._maybe_commit()
+
+    # ---- Transaction ----
+
+    def begin(self):
+        """开启事务，抑制各方法的自动 commit"""
+        self._auto_commit = False
+
+    def commit(self):
+        """提交事务，恢复自动 commit"""
         self.conn.commit()
+        self._auto_commit = True
+
+    def rollback(self):
+        """回滚事务，恢复自动 commit"""
+        self.conn.rollback()
+        self._auto_commit = True
 
     # ---- Cleanup ----
 

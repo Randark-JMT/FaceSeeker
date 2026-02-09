@@ -100,13 +100,19 @@ class FaceCluster:
         _report(total_pairs, total_pairs,
                 f"比对完成，正在写入 {len(groups)} 个人物分组...")
 
-        # 写入数据库
+        # 写入数据库（单事务批量提交，避免逐条 commit）
         result: dict[int, list[int]] = {}
-        for group_face_ids in groups.values():
-            person_id = self.db.add_person()
-            self.db.update_person_face_count(person_id, len(group_face_ids))
-            for fid in group_face_ids:
-                self.db.update_face_person(fid, person_id)
-            result[person_id] = group_face_ids
+        self.db.begin()
+        try:
+            for group_face_ids in groups.values():
+                person_id = self.db.add_person()
+                self.db.update_person_face_count(person_id, len(group_face_ids))
+                for fid in group_face_ids:
+                    self.db.update_face_person(fid, person_id)
+                result[person_id] = group_face_ids
+            self.db.commit()
+        except Exception:
+            self.db.rollback()
+            raise
 
         return result

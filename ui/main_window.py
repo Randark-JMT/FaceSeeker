@@ -33,11 +33,12 @@ class DetectWorker(QThread):
     error = Signal(str)
 
     def __init__(self, engine: FaceEngine, db: DatabaseManager, file_paths: list[str],
-                 num_workers: int | None = None):
+                 base_folder: str = "", num_workers: int | None = None):
         super().__init__()
         self.engine = engine
         self.db = db
         self.file_paths = file_paths
+        self.base_folder = base_folder
         # CUDA 时并行意义不大（GPU 内部已并行），CPU 时按核心数并行
         if num_workers is None:
             if engine.backend_name == "CUDA":
@@ -59,7 +60,19 @@ class DetectWorker(QThread):
         h, w = image.shape[:2]
         faces = engine.detect(image)
         engine.extract_features(image, faces)
-        return fpath, os.path.basename(fpath), w, h, faces
+        
+        # 计算相对路径
+        relative_path = ""
+        if self.base_folder:
+            try:
+                relative_path = os.path.relpath(os.path.dirname(fpath), self.base_folder)
+                if relative_path == ".":
+                    relative_path = ""
+            except ValueError:
+                # 如果文件不在 base_folder 下，就不设置相对路径
+                relative_path = ""
+        
+        return fpath, os.path.basename(fpath), w, h, faces, relative_path
 
     def run(self):
         total = len(self.file_paths)
@@ -88,9 +101,9 @@ class DetectWorker(QThread):
                     if result is None:
                         continue
 
-                    fpath, filename, w, h, faces = result
+                    fpath, filename, w, h, faces, relative_path = result
                     with db_lock:
-                        image_id = self.db.add_image(fpath, filename, w, h, len(faces))
+                        image_id = self.db.add_image(fpath, filename, w, h, len(faces), relative_path)
                         for face in faces:
                             self.db.add_face(
                                 image_id, face.bbox, face.landmarks,
@@ -236,7 +249,11 @@ class MainWindow(QMainWindow):
         """从数据库加载图片列表"""
         self._image_list.clear()
         for row in self.db.get_all_images():
-            item = QListWidgetItem(f"{row['filename']}  [{row['face_count']} 人脸]")
+            # 如果有相对路径信息，显示在文件名前面
+            display_name = row['filename']
+            if row.get('relative_path') and row['relative_path']:
+                display_name = f"{row['relative_path']}/{row['filename']}"
+            item = QListWidgetItem(f"{display_name}  [{row['face_count']} 人脸]")
             item.setData(Qt.ItemDataRole.UserRole, row["id"])
             self._image_list.addItem(item)
 
@@ -299,15 +316,16 @@ class MainWindow(QMainWindow):
         if not folder:
             return
         exts = FaceEngine.SUPPORTED_FORMATS
-        paths = [
-            os.path.join(folder, f)
-            for f in os.listdir(folder)
-            if os.path.splitext(f)[1].lower() in exts
-        ]
+        paths = []
+        # 递归扫描所有子文件夹
+        for root, dirs, files in os.walk(folder):
+            for f in files:
+                if os.path.splitext(f)[1].lower() in exts:
+                    paths.append(os.path.join(root, f))
         if not paths:
-            QMessageBox.information(self, "提示", "该文件夹下没有找到支持的图片格式。")
+            QMessageBox.information(self, "提示", "该文件夹及其子文件夹下没有找到支持的图片格式。")
             return
-        self._run_detect(paths)
+        self._run_detect(paths, folder)
 
     def _on_detect_all(self):
         """对数据库中所有未识别的图片重新识别（清空旧数据后重新导入）"""
@@ -370,7 +388,7 @@ class MainWindow(QMainWindow):
 
     # ---- 后台检测 ----
 
-    def _run_detect(self, paths: list[str]):
+    def _run_detect(self, paths: list[str], base_folder: str = ""):
         self._statusbar.showMessage("正在检测人脸...")
         self._set_actions_enabled(False)
 
@@ -378,7 +396,7 @@ class MainWindow(QMainWindow):
         self._progress.setWindowModality(Qt.WindowModality.WindowModal)
         self._progress.setMinimumDuration(0)
 
-        worker = DetectWorker(self.engine, self.db, paths)
+        worker = DetectWorker(self.engine, self.db, paths, base_folder)
         worker.progress.connect(self._on_detect_progress)
         worker.finished_all.connect(self._on_detect_done)
         worker.error.connect(lambda msg: self._statusbar.showMessage(f"错误: {msg}"))
