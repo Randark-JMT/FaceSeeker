@@ -223,6 +223,7 @@ class MainWindow(QMainWindow):
 
         # 人物归类
         self._person_panel = PersonPanel(self.db)
+        self._person_panel.navigate_to_image.connect(self._navigate_to_image)
         bottom_splitter.addWidget(self._person_panel)
 
         bottom_splitter.setStretchFactor(0, 1)
@@ -286,7 +287,7 @@ class MainWindow(QMainWindow):
                     landmarks=landmarks,
                     score=fd["score"],
                 ))
-                person_ids.append(fd.get("person_id"))
+                person_ids.append(fd["person_id"])
 
             annotated = self.engine.visualize(cv_img, face_datas, person_ids)
             self._result_viewer.set_image(annotated)
@@ -295,6 +296,14 @@ class MainWindow(QMainWindow):
 
         # 更新人脸面板
         self._face_panel.update_faces(cv_img, faces_data)
+
+    def _navigate_to_image(self, image_id: int):
+        """双击人脸缩略图后跳转到对应图片"""
+        for i in range(self._image_list.count()):
+            item = self._image_list.item(i)
+            if item.data(Qt.ItemDataRole.UserRole) == image_id:
+                self._image_list.setCurrentItem(item)
+                return
 
     # ---- 工具栏回调 ----
 

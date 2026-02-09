@@ -16,10 +16,25 @@ from core.face_engine import FaceEngine, imread_unicode
 MAX_THUMBS_PER_GROUP = 8
 
 
+class ClickableThumb(QLabel):
+    """可双击的人脸缩略图"""
+
+    double_clicked = Signal(int)  # image_id
+
+    def __init__(self, image_id: int, parent=None):
+        super().__init__(parent)
+        self._image_id = image_id
+        self.setCursor(Qt.CursorShape.PointingHandCursor)
+
+    def mouseDoubleClickEvent(self, event):
+        self.double_clicked.emit(self._image_id)
+
+
 class PersonGroup(QFrame):
     """单个人物的折叠分组"""
 
     name_changed = Signal(int, str)  # person_id, new_name
+    face_double_clicked = Signal(int)  # image_id
 
     def __init__(self, person_id: int, name: str, face_rows: list, parent=None):
         super().__init__(parent)
@@ -50,8 +65,9 @@ class PersonGroup(QFrame):
         thumb_layout.setSpacing(4)
         shown = face_rows[:MAX_THUMBS_PER_GROUP]
         for row in shown:
-            thumb_label = self._make_thumb(row)
-            thumb_layout.addWidget(thumb_label)
+            thumb = self._make_thumb(row)
+            thumb.double_clicked.connect(self.face_double_clicked)
+            thumb_layout.addWidget(thumb)
 
         overflow = len(face_rows) - len(shown)
         if overflow > 0:
@@ -67,22 +83,22 @@ class PersonGroup(QFrame):
         layout.addLayout(thumb_layout)
 
     @staticmethod
-    def _make_thumb(row) -> QLabel:
-        thumb_label = QLabel()
-        thumb_label.setFixedSize(56, 56)
-        thumb_label.setStyleSheet("border: 1px solid #555;")
-        thumb_label.setToolTip(f"来源: {row['filename']}")
+    def _make_thumb(row) -> ClickableThumb:
+        thumb = ClickableThumb(row["image_id"])
+        thumb.setFixedSize(56, 56)
+        thumb.setStyleSheet("border: 1px solid #555;")
+        thumb.setToolTip(f"双击跳转 | 来源: {row['filename']}")
 
         img = imread_unicode(row["file_path"])
         if img is not None:
             bbox = (row["bbox_x"], row["bbox_y"], row["bbox_w"], row["bbox_h"])
             crop = FaceEngine.crop_face(img, bbox)
             pix = _cv_to_pixmap(crop, 56, 56)
-            thumb_label.setPixmap(pix)
+            thumb.setPixmap(pix)
         else:
-            thumb_label.setText("?")
-            thumb_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        return thumb_label
+            thumb.setText("?")
+            thumb.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        return thumb
 
     def _on_name_changed(self):
         self.name_changed.emit(self.person_id, self._name_edit.text().strip())
@@ -101,6 +117,8 @@ def _cv_to_pixmap(cv_img: np.ndarray, w: int, h: int) -> QPixmap:
 
 class PersonPanel(QWidget):
     """人物归类面板"""
+
+    navigate_to_image = Signal(int)  # image_id — 外部连接此信号实现跳转
 
     def __init__(self, db: DatabaseManager, parent=None):
         super().__init__(parent)
@@ -145,8 +163,8 @@ class PersonPanel(QWidget):
                 continue
             group = PersonGroup(person["id"], person["name"], face_rows)
             group.name_changed.connect(self._on_name_changed)
+            group.face_double_clicked.connect(self.navigate_to_image)
             self._container_layout.addWidget(group)
-            # 每添加几个分组就让 Qt 事件循环处理一次，避免长时间冻结
             if (i + 1) % 3 == 0:
                 QApplication.processEvents()
 
