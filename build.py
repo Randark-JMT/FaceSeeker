@@ -19,7 +19,7 @@ def build():
         "--onefile",  # 生成单个可执行文件
         
         # 输出设置
-        "--output-dir=dist",
+        "--output-dir=build",
         "--output-filename=FaceSeeker.exe",
         
         # Windows 设置

@@ -5,8 +5,5 @@ build/
 
 .venv*/
 
-*.build/
-*.dist/
-*.onefile-build/
-*.exe
+build/
 faceseeker.log
