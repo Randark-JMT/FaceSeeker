@@ -1,24 +1,24 @@
-"""人脸聚类模块 - 基于 Union-Find 将相似人脸归为同一人"""
+"""人脸聚类模块 - 基于向量化余弦相似度 + Union-Find 将相似人脸归为同一人"""
 
 from collections import defaultdict
+
+import numpy as np
 
 from core.database import DatabaseManager
 
 
 class UnionFind:
-    """并查集"""
+    """并查集（路径压缩 + 按秩合并）"""
 
-    def __init__(self):
-        self.parent: dict[int, int] = {}
-        self.rank: dict[int, int] = {}
+    def __init__(self, n: int):
+        self.parent = list(range(n))
+        self.rank = [0] * n
 
     def find(self, x: int) -> int:
-        if x not in self.parent:
-            self.parent[x] = x
-            self.rank[x] = 0
-        if self.parent[x] != x:
-            self.parent[x] = self.find(self.parent[x])
-        return self.parent[x]
+        while self.parent[x] != x:
+            self.parent[x] = self.parent[self.parent[x]]  # 路径压半
+            x = self.parent[x]
+        return x
 
     def union(self, x: int, y: int):
         rx, ry = self.find(x), self.find(y)
@@ -32,19 +32,24 @@ class UnionFind:
 
 
 class FaceCluster:
-    """人脸聚类器"""
+    """人脸聚类器（向量化加速版）"""
 
-    def __init__(self, db: DatabaseManager, recognizer):
+    # 分块大小：控制内存占用，每块最多占 BLOCK * n * 4 字节
+    BLOCK_SIZE = 512
+
+    def __init__(self, db: DatabaseManager, recognizer=None):
         self.db = db
+        # recognizer 保留兼容，但不再用于逐对 match
         self.recognizer = recognizer
 
     def cluster(self, cosine_threshold: float = 0.363,
                 progress_cb=None) -> dict[int, list[int]]:
         """
         对数据库中所有有特征的人脸进行聚类。
+        使用 numpy 向量化矩阵乘法计算余弦相似度，性能远优于逐对调用。
 
         Args:
-            cosine_threshold: 余弦相似度阈值
+            cosine_threshold: 余弦相似度阈值（SFace 推荐 0.363）
             progress_cb: 进度回调 (current, total, stage_text)
 
         Returns:
@@ -64,43 +69,63 @@ class FaceCluster:
             return {}
 
         # 加载 face_id 和特征
-        face_ids = []
-        features = []
+        _report(0, 1, "加载人脸特征...")
+        face_ids: list[int] = []
+        feat_list: list[np.ndarray] = []
         for row in rows:
             face_ids.append(row["id"])
             feat = DatabaseManager.feature_from_blob(row["feature"])
-            features.append(feat)
+            feat_list.append(feat.flatten())
 
         n = len(face_ids)
-        total_pairs = n * (n - 1) // 2
-        _report(0, total_pairs, f"加载 {n} 张人脸，开始两两比对 ({total_pairs} 对)...")
 
-        # Union-Find 聚类
-        uf = UnionFind()
-        pair_count = 0
-        for i in range(n):
-            for j in range(i + 1, n):
-                score = float(self.recognizer.match(
-                    features[i], features[j],
-                    0  # cv2.FaceRecognizerSF_FR_COSINE == 0
-                ))
-                if score >= cosine_threshold:
-                    uf.union(face_ids[i], face_ids[j])
-                pair_count += 1
-                if pair_count % 500 == 0 or pair_count == total_pairs:
-                    _report(pair_count, total_pairs,
-                            f"比对进度: {pair_count}/{total_pairs}")
+        # 构建特征矩阵 (n, dim) 并 L2 归一化
+        feat_matrix = np.vstack(feat_list).astype(np.float32)  # (n, dim)
+        norms = np.linalg.norm(feat_matrix, axis=1, keepdims=True)
+        norms = np.maximum(norms, 1e-10)  # 避免除零
+        feat_matrix /= norms
 
-        # 收集分组
+        _report(0, n, f"加载 {n} 张人脸，开始向量化比对...")
+
+        # Union-Find 聚类（基于索引 0..n-1）
+        uf = UnionFind(n)
+
+        # 分块计算相似度矩阵，避免一次性分配 n*n 矩阵导致内存不足
+        block = self.BLOCK_SIZE
+        total_blocks = (n + block - 1) // block
+        processed_blocks = 0
+
+        for i_start in range(0, n, block):
+            i_end = min(i_start + block, n)
+            # 只计算上三角部分：j >= i_start
+            # 对于当前块的行 [i_start, i_end)，与所有列 [i_start, n) 比较
+            chunk_i = feat_matrix[i_start:i_end]          # (block_i, dim)
+            chunk_j = feat_matrix[i_start:]               # (n - i_start, dim)
+            sim_block = chunk_i @ chunk_j.T               # (block_i, n - i_start)
+
+            # 提取超过阈值的配对
+            rows_idx, cols_idx = np.where(sim_block >= cosine_threshold)
+            for r, c in zip(rows_idx, cols_idx):
+                abs_i = i_start + r
+                abs_j = i_start + c
+                if abs_i < abs_j:  # 只取上三角
+                    uf.union(abs_i, abs_j)
+
+            processed_blocks += 1
+            _report(processed_blocks, total_blocks,
+                    f"比对进度: 第 {processed_blocks}/{total_blocks} 块 "
+                    f"(行 {i_start}-{i_end-1}/{n-1})")
+
+        # 收集分组（索引 → face_id）
         groups: dict[int, list[int]] = defaultdict(list)
-        for fid in face_ids:
-            root = uf.find(fid)
-            groups[root].append(fid)
+        for idx in range(n):
+            root = uf.find(idx)
+            groups[root].append(face_ids[idx])
 
-        _report(total_pairs, total_pairs,
+        _report(total_blocks, total_blocks,
                 f"比对完成，正在写入 {len(groups)} 个人物分组...")
 
-        # 写入数据库（单事务批量提交，避免逐条 commit）
+        # 写入数据库（单事务批量提交）
         result: dict[int, list[int]] = {}
         self.db.begin()
         try:
