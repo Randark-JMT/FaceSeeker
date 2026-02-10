@@ -80,12 +80,27 @@ class DetectWorker(QThread):
     def run(self):
         total = len(self.file_paths)
         # 每个工作线程需要独立的 engine 实例（detector 有状态）
+        # 使用 thread-local 确保每个线程独占自己的 engine，避免并发访问
+        _local = threading.local()
         engines = [self.engine.clone() for _ in range(self.num_workers)]
+        engine_locks = [threading.Lock() for _ in range(self.num_workers)]
+        _engine_idx = [0]  # 分配计数器
+        _idx_lock = threading.Lock()
         db_lock = threading.Lock()
+
+        def _get_thread_engine() -> FaceEngine:
+            """每个线程首次调用时分配一个独占的 engine 实例"""
+            if not hasattr(_local, 'engine'):
+                with _idx_lock:
+                    idx = _engine_idx[0]
+                    _engine_idx[0] += 1
+                _local.engine = engines[idx]
+            return _local.engine
+
         counter = [0]  # 用列表以便在闭包中修改
 
         def worker(idx: int, fpath: str):
-            engine = engines[idx % self.num_workers]
+            engine = _get_thread_engine()
             return self._process_one(engine, fpath)
 
         with ThreadPoolExecutor(max_workers=self.num_workers) as pool:

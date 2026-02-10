@@ -26,7 +26,10 @@ class FaceData:
 
 
 def imread_unicode(filepath: str) -> np.ndarray | None:
-    """读取 Unicode 路径的图像（解决 Windows 上 cv2.imread 不支持非 ASCII 路径的问题）"""
+    """读取 Unicode 路径的图像（解决 Windows 上 cv2.imread 不支持非 ASCII 路径的问题）
+    
+    返回的图像保证为 3 通道 uint8 BGR 连续数组，或 None。
+    """
     try:
         buf = np.fromfile(filepath, dtype=np.uint8)
         if buf.size == 0:
@@ -35,10 +38,52 @@ def imread_unicode(filepath: str) -> np.ndarray | None:
         # 验证图像有效性：不为 None，维度正确，且有实际内容
         if img is None or img.size == 0 or len(img.shape) < 2:
             return None
+        # 归一化图像格式，确保 YuNet / SFace 能正确处理
+        img = _normalize_image(img)
         return img
     except Exception as e:
         log_opencv_error("imread_unicode", e, suppress=True)
         return None
+
+
+def _normalize_image(img: np.ndarray) -> np.ndarray | None:
+    """将图像归一化为 3 通道 uint8 BGR 连续数组。
+    
+    处理灰度、RGBA、16-bit 等非标准格式，返回 None 表示无法转换。
+    """
+    if img is None or img.size == 0:
+        return None
+
+    # 转换为 uint8（处理 16-bit / float 图像）
+    if img.dtype != np.uint8:
+        if img.dtype in (np.float32, np.float64):
+            img = np.clip(img * 255, 0, 255).astype(np.uint8)
+        elif img.dtype == np.uint16:
+            img = (img >> 8).astype(np.uint8)
+        else:
+            img = img.astype(np.uint8)
+
+    # 转换通道数
+    if len(img.shape) == 2:
+        # 灰度 → BGR
+        img = cv2.cvtColor(img, cv2.COLOR_GRAY2BGR)
+    elif len(img.shape) == 3:
+        channels = img.shape[2]
+        if channels == 1:
+            img = cv2.cvtColor(img, cv2.COLOR_GRAY2BGR)
+        elif channels == 4:
+            # RGBA / BGRA → BGR
+            img = cv2.cvtColor(img, cv2.COLOR_BGRA2BGR)
+        elif channels != 3:
+            return None  # 不支持的通道数
+    else:
+        return None
+
+    # 确保内存连续（某些 OpenCV DNN 操作要求 contiguous）
+    if not img.flags['C_CONTIGUOUS']:
+        img = np.ascontiguousarray(img)
+
+    return img
 
 
 def detect_backends() -> tuple[int, int, str]:
@@ -152,7 +197,17 @@ class FaceEngine:
             if h <= 0 or w <= 0:
                 self.logger.warning(f"detect: 图像尺寸无效 ({w}x{h})")
                 return []
-            
+
+            # 防御性检查：确保图像是 3 通道 uint8（避免 OpenCV 断言失败）
+            if image.dtype != np.uint8 or len(image.shape) != 3 or image.shape[2] != 3:
+                image = _normalize_image(image)
+                if image is None:
+                    self.logger.warning("detect: 图像格式无法转换为 BGR uint8")
+                    return []
+
+            if not image.flags['C_CONTIGUOUS']:
+                image = np.ascontiguousarray(image)
+
             self.detector.setInputSize((w, h))
             _, raw_faces = self.detector.detect(image)
 
