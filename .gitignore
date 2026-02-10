@@ -3,7 +3,7 @@ faceseeker.db
 dist/
 build/
 
-.venv/
+.venv*/
 
 *.build/
 *.dist/
