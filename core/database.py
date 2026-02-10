@@ -62,6 +62,11 @@ class DatabaseManager:
                 FOREIGN KEY (image_id) REFERENCES images(id) ON DELETE CASCADE,
                 FOREIGN KEY (person_id) REFERENCES persons(id) ON DELETE SET NULL
             );
+
+            -- 索引加速聚类和查询
+            CREATE INDEX IF NOT EXISTS idx_faces_image_id ON faces(image_id);
+            CREATE INDEX IF NOT EXISTS idx_faces_person_id ON faces(person_id);
+            CREATE INDEX IF NOT EXISTS idx_faces_has_feature ON faces(id) WHERE feature IS NOT NULL;
         """)
         self.conn.commit()
 
@@ -136,6 +141,13 @@ class DatabaseManager:
     def update_face_person(self, face_id: int, person_id: Optional[int]):
         self.conn.execute(
             "UPDATE faces SET person_id = ? WHERE id = ?", (person_id, face_id)
+        )
+        self._maybe_commit()
+
+    def batch_update_face_persons(self, updates: list[tuple[int, int]]):
+        """批量更新人脸的 person_id，每条为 (person_id, face_id)"""
+        self.conn.executemany(
+            "UPDATE faces SET person_id = ? WHERE id = ?", updates
         )
         self._maybe_commit()
 

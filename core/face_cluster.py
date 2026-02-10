@@ -129,12 +129,15 @@ class FaceCluster:
         result: dict[int, list[int]] = {}
         self.db.begin()
         try:
+            all_updates: list[tuple[int, int]] = []
             for group_face_ids in groups.values():
                 person_id = self.db.add_person()
                 self.db.update_person_face_count(person_id, len(group_face_ids))
                 for fid in group_face_ids:
-                    self.db.update_face_person(fid, person_id)
+                    all_updates.append((person_id, fid))
                 result[person_id] = group_face_ids
+            # 批量更新 face -> person 映射
+            self.db.batch_update_face_persons(all_updates)
             self.db.commit()
         except Exception:
             self.db.rollback()

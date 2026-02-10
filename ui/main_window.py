@@ -7,7 +7,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from PySide6.QtWidgets import (
     QMainWindow, QWidget, QVBoxLayout, QSplitter,
     QToolBar, QListWidget, QListWidgetItem, QMessageBox,
-    QFileDialog, QProgressDialog, QStatusBar, QLabel,
+    QFileDialog, QProgressDialog, QStatusBar, QLabel, QSlider,
 )
 from PySide6.QtCore import Qt, QThread, Signal
 from PySide6.QtGui import QAction
@@ -186,6 +186,26 @@ class MainWindow(QMainWindow):
         self._act_clear.triggered.connect(self._on_clear_all)
         tb.addAction(self._act_clear)
 
+        tb.addSeparator()
+
+        # 聚类阈值滑块（0.20 ~ 0.60，默认 0.363）
+        thresh_label = QLabel("聚类阈值:")
+        thresh_label.setStyleSheet("padding: 0 4px;")
+        tb.addWidget(thresh_label)
+        self._thresh_slider = QSlider(Qt.Orientation.Horizontal)
+        self._thresh_slider.setRange(20, 60)  # 实际值 = slider / 100
+        self._thresh_slider.setValue(36)       # 0.36
+        self._thresh_slider.setFixedWidth(120)
+        self._thresh_slider.setToolTip("调整人脸聚类的余弦相似度阈值\n值越高→分类越严格，人物组越多\n值越低→分类越宽松，更容易合并")
+        tb.addWidget(self._thresh_slider)
+        self._thresh_value_label = QLabel("0.36")
+        self._thresh_value_label.setFixedWidth(36)
+        self._thresh_value_label.setStyleSheet("padding: 0 4px;")
+        tb.addWidget(self._thresh_value_label)
+        self._thresh_slider.valueChanged.connect(
+            lambda v: self._thresh_value_label.setText(f"{v / 100:.2f}")
+        )
+
     def _build_ui(self):
         central = QWidget()
         self.setCentralWidget(central)
@@ -354,20 +374,21 @@ class MainWindow(QMainWindow):
             QMessageBox.information(self, "提示", "没有可用的人脸特征数据，请先导入并识别图片。")
             return
 
+        threshold = self._thresh_slider.value() / 100.0
+
         self._statusbar.showMessage("正在进行人脸归类...")
         self._set_actions_enabled(False)
 
         n = len(faces)
-        total_pairs = n * (n - 1) // 2
         self._cluster_progress = QProgressDialog(
-            f"正在归类 {n} 张人脸...", None, 0, max(total_pairs, 1), self
+            f"正在归类 {n} 张人脸（阈值 {threshold:.2f}）...", None, 0, 100, self
         )
         self._cluster_progress.setWindowTitle("人脸归类")
         self._cluster_progress.setWindowModality(Qt.WindowModality.WindowModal)
         self._cluster_progress.setMinimumDuration(0)
         self._cluster_progress.setValue(0)
 
-        worker = ClusterWorker(self.cluster_engine)
+        worker = ClusterWorker(self.cluster_engine, threshold)
         worker.progress.connect(self._on_cluster_progress)
         worker.finished_cluster.connect(self._on_cluster_done)
         worker.finished.connect(worker.deleteLater)
