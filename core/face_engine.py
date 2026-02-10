@@ -163,18 +163,32 @@ class FaceEngine:
 
             results = []
             for face_row in raw_faces:
-                bbox = tuple(map(int, face_row[:4]))
-                fw, fh = bbox[2], bbox[3]
-                # 过滤过小的人脸（特征不可靠）
-                if fw < min_sz or fh < min_sz:
-                    continue
+                try:
+                    # 验证数值有效性（过滤 inf/nan）
+                    if not all(np.isfinite(face_row[:4])):
+                        continue
+                    
+                    bbox = tuple(map(int, face_row[:4]))
+                    fw, fh = bbox[2], bbox[3]
+                    # 过滤过小的人脸（特征不可靠）
+                    if fw < min_sz or fh < min_sz:
+                        continue
 
-                landmarks = [
-                    (int(face_row[4 + j * 2]), int(face_row[5 + j * 2]))
-                    for j in range(5)
-                ]
-                score = float(face_row[14])
-                results.append(FaceData(bbox=bbox, landmarks=landmarks, score=score))
+                    # 验证关键点数值有效性
+                    landmark_coords = face_row[4:14]
+                    if not all(np.isfinite(landmark_coords)):
+                        continue
+                    
+                    landmarks = [
+                        (int(face_row[4 + j * 2]), int(face_row[5 + j * 2]))
+                        for j in range(5)
+                    ]
+                    score = float(face_row[14])
+                    results.append(FaceData(bbox=bbox, landmarks=landmarks, score=score))
+                except (ValueError, OverflowError) as e:
+                    # 跳过无效的检测结果
+                    self.logger.debug(f"跳过无效检测结果: {e}")
+                    continue
             return results
         except Exception as e:
             log_opencv_error("FaceEngine.detect", e, suppress=True)
