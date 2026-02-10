@@ -61,7 +61,8 @@ def main():
         QScrollArea {
             border: none;
         }
-      获取模型文件路径（只读资源，从资源目录读取）
+    """)
+    # 获取模型文件路径（只读资源，从资源目录读取）
     detection_model = config.get_resource_path(os.path.join("models", "face_detection_yunet_2023mar.onnx"))
     recognition_model = config.get_resource_path(os.path.join("models", "face_recognition_sface_2021dec.onnx"))
     
@@ -113,8 +114,8 @@ def main():
     logger.info("程序正在退出...")
     db.close()
     logger.info("数据库已关闭")
-    logger.info("FaceSeeker 已退出"
-        sys.exit(1)
+    logger.info("FaceSeeker 已退出")
+    sys.exit(1)
 
     # 初始化核心组件
     db = DatabaseManager(DB_PATH)
