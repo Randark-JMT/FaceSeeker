@@ -1,10 +1,11 @@
-"""人脸聚类模块 - 基于向量化余弦相似度 + Union-Find 将相似人脸归为同一人"""
+""" 人脸聚类模块 - 基于向量化余弦相似度 + Union-Find 将相似人脸归为同一人"""
 
 from collections import defaultdict
 
 import numpy as np
 
 from core.database import DatabaseManager
+from core.logger import get_logger
 
 
 class UnionFind:
@@ -41,6 +42,7 @@ class FaceCluster:
         self.db = db
         # recognizer 保留兼容，但不再用于逐对 match
         self.recognizer = recognizer
+        self.logger = get_logger()
 
     def cluster(self, cosine_threshold: float = 0.363,
                 progress_cb=None) -> dict[int, list[int]]:
@@ -59,6 +61,8 @@ class FaceCluster:
         def _report(current, total, text):
             if progress_cb:
                 progress_cb(current, total, text)
+        
+        self.logger.info(f"开始人脸聚类，阈值={cosine_threshold:.3f}")
 
         # 清除旧的归类
         _report(0, 1, "清除旧归类数据...")
@@ -124,6 +128,8 @@ class FaceCluster:
 
         _report(total_blocks, total_blocks,
                 f"比对完成，正在写入 {len(groups)} 个人物分组...")
+        
+        self.logger.info(f"人脸相似度比对完成，发现 {len(groups)} 个聚类组")
 
         # 写入数据库（单事务批量提交）
         result: dict[int, list[int]] = {}
@@ -139,7 +145,9 @@ class FaceCluster:
             # 批量更新 face -> person 映射
             self.db.batch_update_face_persons(all_updates)
             self.db.commit()
-        except Exception:
+            self.logger.info(f"聚类结果已写入数据库，共 {len(result)} 个人物")
+        except Exception as e:
+            self.logger.error(f"聚类写入数据库失败: {e}", exc_info=True)
             self.db.rollback()
             raise
 

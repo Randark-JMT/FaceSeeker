@@ -5,6 +5,8 @@ import json
 import numpy as np
 from typing import Optional
 
+from core.logger import get_logger
+
 
 class DatabaseManager:
     """人脸识别系统数据库管理器"""
@@ -13,8 +15,11 @@ class DatabaseManager:
         self.db_path = db_path
         self.conn: Optional[sqlite3.Connection] = None
         self._auto_commit = True
+        self.logger = get_logger()
+        self.logger.info(f"开始连接数据库: {db_path}")
         self._connect()
         self._init_db()
+        self.logger.info("数据库初始化完成")
 
     def _connect(self):
         self.conn = sqlite3.connect(self.db_path, check_same_thread=False)
@@ -225,5 +230,6 @@ class DatabaseManager:
 
     def close(self):
         if self.conn:
+            self.logger.info("关闭数据库连接")
             self.conn.close()
             self.conn = None

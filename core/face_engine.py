@@ -6,6 +6,8 @@ import numpy as np
 from dataclasses import dataclass, field
 from typing import Optional
 
+from core.logger import get_logger, log_opencv_error
+
 
 @dataclass
 class FaceData:
@@ -29,20 +31,25 @@ def imread_unicode(filepath: str) -> np.ndarray | None:
         buf = np.fromfile(filepath, dtype=np.uint8)
         img = cv2.imdecode(buf, cv2.IMREAD_COLOR)
         return img
-    except Exception:
+    except Exception as e:
+        log_opencv_error("imread_unicode", e, suppress=True)
         return None
 
 
 def detect_backends() -> tuple[int, int, str]:
     """检测可用的 DNN 后端，优先 CUDA > CPU。返回 (backend_id, target_id, name)"""
+    logger = get_logger()
     try:
         # 尝试创建一个小的 CUDA 矩阵来验证 CUDA 是否真正可用
         backends = cv2.dnn.getAvailableBackends()
         cuda_pair = (cv2.dnn.DNN_BACKEND_CUDA, cv2.dnn.DNN_TARGET_CUDA)
         if cuda_pair in backends:
+            logger.info("检测到 CUDA 后端可用")
             return cv2.dnn.DNN_BACKEND_CUDA, cv2.dnn.DNN_TARGET_CUDA, "CUDA"
-    except Exception:
-        pass
+    except Exception as e:
+        log_opencv_error("detect_backends", e, suppress=True)
+    
+    logger.info("使用 CPU 后端")
     return cv2.dnn.DNN_BACKEND_DEFAULT, cv2.dnn.DNN_TARGET_CPU, "CPU"
 
 
@@ -74,6 +81,8 @@ class FaceEngine:
         backend_id: int | None = None,
         target_id: int | None = None,
     ):
+        self.logger = get_logger()
+        
         if not os.path.exists(detection_model):
             raise FileNotFoundError(
                 f"找不到检测模型: {detection_model}\n"
@@ -99,6 +108,9 @@ class FaceEngine:
 
         self._backend_id = backend_id
         self._target_id = target_id
+        
+        self.logger.info(f"初始化人脸检测器: {detection_model}")
+        self.logger.info(f"初始化人脸识别器: {recognition_model}")
 
         self.detector = cv2.FaceDetectorYN.create(
             detection_model, "", (320, 320),
@@ -125,41 +137,51 @@ class FaceEngine:
             min_face_size: 最小人脸尺寸，低于此值的检测结果会被过滤。
                            None 时使用类默认值 MIN_FACE_SIZE。
         """
-        h, w = image.shape[:2]
-        self.detector.setInputSize((w, h))
-        _, raw_faces = self.detector.detect(image)
+        try:
+            h, w = image.shape[:2]
+            self.detector.setInputSize((w, h))
+            _, raw_faces = self.detector.detect(image)
 
-        if raw_faces is None or len(raw_faces) == 0:
+            if raw_faces is None or len(raw_faces) == 0:
+                return []
+
+            min_sz = min_face_size if min_face_size is not None else self.MIN_FACE_SIZE
+
+            results = []
+            for face_row in raw_faces:
+                bbox = tuple(map(int, face_row[:4]))
+                fw, fh = bbox[2], bbox[3]
+                # 过滤过小的人脸（特征不可靠）
+                if fw < min_sz or fh < min_sz:
+                    continue
+
+                landmarks = [
+                    (int(face_row[4 + j * 2]), int(face_row[5 + j * 2]))
+                    for j in range(5)
+                ]
+                score = float(face_row[14])
+                results.append(FaceData(bbox=bbox, landmarks=landmarks, score=score))
+            return results
+        except Exception as e:
+            log_opencv_error("FaceEngine.detect", e, suppress=True)
             return []
-
-        min_sz = min_face_size if min_face_size is not None else self.MIN_FACE_SIZE
-
-        results = []
-        for face_row in raw_faces:
-            bbox = tuple(map(int, face_row[:4]))
-            fw, fh = bbox[2], bbox[3]
-            # 过滤过小的人脸（特征不可靠）
-            if fw < min_sz or fh < min_sz:
-                continue
-
-            landmarks = [
-                (int(face_row[4 + j * 2]), int(face_row[5 + j * 2]))
-                for j in range(5)
-            ]
-            score = float(face_row[14])
-            results.append(FaceData(bbox=bbox, landmarks=landmarks, score=score))
-        return results
 
     def extract_feature(self, image: np.ndarray, face: FaceData) -> np.ndarray:
         """提取单张人脸的特征向量（L2 归一化）"""
-        aligned = self.recognizer.alignCrop(image, face.to_detect_array())
-        feature = self.recognizer.feature(aligned)
-        # L2 归一化，确保后续余弦相似度计算的数值稳定性
-        norm = np.linalg.norm(feature)
-        if norm > 0:
-            feature = feature / norm
-        face.feature = feature
-        return feature
+        try:
+            aligned = self.recognizer.alignCrop(image, face.to_detect_array())
+            feature = self.recognizer.feature(aligned)
+            # L2 归一化，确保后续余弦相似度计算的数值稳定性
+            norm = np.linalg.norm(feature)
+            if norm > 0:
+                feature = feature / norm
+            face.feature = feature
+            return feature
+        except Exception as e:
+            log_opencv_error("FaceEngine.extract_feature", e, suppress=True)
+            # 返回一个零向量
+            face.feature = None
+            return np.zeros(128, dtype=np.float32)
 
     def extract_features(self, image: np.ndarray, faces: list[FaceData]) -> list[FaceData]:
         """批量提取人脸特征"""

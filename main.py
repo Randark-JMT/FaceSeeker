@@ -6,41 +6,26 @@ import os
 
 from PySide6.QtWidgets import QApplication, QMessageBox
 
+from core.config import get_config
+from core.logger import setup_logger, get_logger, console
 from core.database import DatabaseManager
 from core.face_engine import FaceEngine
 from ui.main_window import MainWindow
 
 
-def get_app_dir():
-    """获取程序所在目录（源代码运行时为main.py目录，打包后为exe目录）"""
-    if getattr(sys, 'frozen', False):
-        # 打包后运行：返回exe所在目录
-        return os.path.dirname(sys.executable)
-    else:
-        # 源代码运行：返回main.py所在目录
-        return os.path.dirname(os.path.abspath(__file__))
-
-
-def get_resource_path(relative_path):
-    """获取资源文件路径（打包后从临时目录读取，源代码运行从项目目录读取）"""
-    if getattr(sys, 'frozen', False):
-        # 打包后：资源文件在PyInstaller的临时目录
-        base_path = sys._MEIPASS
-    else:
-        # 源代码运行：资源文件在项目目录
-        base_path = os.path.dirname(os.path.abspath(__file__))
-    return os.path.join(base_path, relative_path)
-
-
-# 模型文件路径（只读资源，从资源目录读取）
-DETECTION_MODEL = get_resource_path(os.path.join("models", "face_detection_yunet_2023mar.onnx"))
-RECOGNITION_MODEL = get_resource_path(os.path.join("models", "face_recognition_sface_2021dec.onnx"))
-
-# 数据库文件路径（用户数据，始终放在程序所在目录）
-DB_PATH = os.path.join(get_app_dir(), "faceseeker.db")
-
-
 def main():
+    # 初始化配置
+    config = get_config()
+    
+    # 初始化日志系统
+    logger = setup_logger(config.log_path)
+    logger.info("=" * 60)
+    logger.info("FaceSeeker 启动")
+    logger.info(f"缓存目录: {config.cache_dir}")
+    logger.info(f"数据库路径: {config.database_path}")
+    logger.info(f"日志路径: {config.log_path}")
+    logger.info("=" * 60)
+    
     app = QApplication(sys.argv)
 
     # 全局暗色样式
@@ -76,36 +61,59 @@ def main():
         QScrollArea {
             border: none;
         }
-        QStatusBar {
-            background-color: #007acc;
-            color: white;
-        }
-        QProgressDialog {
-            background-color: #2d2d2d;
-        }
-        QSplitter::handle {
-            background-color: #333;
-        }
-    """)
-
+      获取模型文件路径（只读资源，从资源目录读取）
+    detection_model = config.get_resource_path(os.path.join("models", "face_detection_yunet_2023mar.onnx"))
+    recognition_model = config.get_resource_path(os.path.join("models", "face_recognition_sface_2021dec.onnx"))
+    
     # 检查模型文件
     missing = []
-    if not os.path.exists(DETECTION_MODEL):
+    if not os.path.exists(detection_model):
         missing.append(
-            f"检测模型: {DETECTION_MODEL}\n"
+            f"检测模型: {detection_model}\n"
             "  下载地址: https://github.com/opencv/opencv_zoo/tree/master/models/face_detection_yunet"
         )
-    if not os.path.exists(RECOGNITION_MODEL):
+        logger.error(f"缺少检测模型: {detection_model}")
+    if not os.path.exists(recognition_model):
         missing.append(
-            f"识别模型: {RECOGNITION_MODEL}\n"
+            f"识别模型: {recognition_model}\n"
             "  下载地址: https://github.com/opencv/opencv_zoo/tree/master/models/face_recognition_sface"
         )
+        logger.error(f"缺少识别模型: {recognition_model}")
 
     if missing:
+        logger.critical("模型文件缺失，程序无法启动")
         QMessageBox.critical(
             None, "缺少模型文件",
             "请将以下模型文件放入 models/ 目录:\n\n" + "\n\n".join(missing),
         )
+        sys.exit(1)
+
+    # 初始化核心组件
+    try:
+        logger.info("初始化数据库...")
+        db = DatabaseManager(config.database_path)
+        logger.info("初始化人脸识别引擎...")
+        engine = FaceEngine(detection_model, recognition_model)
+        logger.info(f"人脸识别引擎初始化成功 [后端: {engine.backend_name}]")
+    except Exception as e:
+        logger.critical(f"初始化失败: {e}", exc_info=True)
+        QMessageBox.critical(
+            None, "初始化失败",
+            f"程序初始化失败:\n{str(e)}\n\n请查看日志文件: {config.log_path}",
+        )
+        sys.exit(1)
+
+    window = MainWindow(engine, db, config)
+    window.setWindowTitle(f"FaceSeeker - 人脸识别系统  [后端: {engine.backend_name}]")
+    window.show()
+    
+    logger.info("主窗口已显示，程序就绪")
+
+    ret = app.exec()
+    logger.info("程序正在退出...")
+    db.close()
+    logger.info("数据库已关闭")
+    logger.info("FaceSeeker 已退出"
         sys.exit(1)
 
     # 初始化核心组件

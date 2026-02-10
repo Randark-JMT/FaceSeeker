@@ -2,3 +2,4 @@ opencv-python
 numpy
 pyside6
 pyinstaller
+rich

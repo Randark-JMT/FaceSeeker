@@ -12,6 +12,8 @@ from PySide6.QtWidgets import (
 from PySide6.QtCore import Qt, QThread, Signal
 from PySide6.QtGui import QAction
 
+from core.config import Config
+from core.logger import get_logger, log_opencv_error, log_exception
 from core.database import DatabaseManager
 from core.face_engine import FaceEngine, FaceData, imread_unicode
 from core.face_cluster import FaceCluster
@@ -110,6 +112,8 @@ class DetectWorker(QThread):
                                 face.score, face.feature,
                             )
                 except Exception as e:
+                    logger = get_logger()
+                    log_opencv_error("DetectWorker._process_one", e, suppress=True)
                     self.error.emit(f"{os.path.basename(fpath)}: {e}")
 
         self.finished_all.emit()
@@ -138,11 +142,13 @@ class ClusterWorker(QThread):
 
 class MainWindow(QMainWindow):
 
-    def __init__(self, engine: FaceEngine, db: DatabaseManager):
+    def __init__(self, engine: FaceEngine, db: DatabaseManager, config: Config):
         super().__init__()
         self.engine = engine
         self.db = db
+        self.config = config
         self.cluster_engine = FaceCluster(db, engine.recognizer)
+        self.logger = get_logger()
 
         self._current_image_id: int | None = None
         self._worker: QThread | None = None
@@ -154,6 +160,8 @@ class MainWindow(QMainWindow):
         self._build_ui()
         self._build_statusbar()
         self._load_image_list()
+        
+        self.logger.info("主窗口初始化完成")
 
     # ---- 构建 UI ----
 
@@ -185,6 +193,13 @@ class MainWindow(QMainWindow):
         self._act_clear = QAction("清空数据", self)
         self._act_clear.triggered.connect(self._on_clear_all)
         tb.addAction(self._act_clear)
+
+        tb.addSeparator()
+        
+        # 设置缓存目录按钮
+        self._act_set_cache = QAction("设置缓存目录", self)
+        self._act_set_cache.triggered.connect(self._on_set_cache_dir)
+        tb.addAction(self._act_set_cache)
 
         tb.addSeparator()
 
@@ -338,12 +353,14 @@ class MainWindow(QMainWindow):
             self, "选择图片", "", SUPPORTED_FORMATS
         )
         if paths:
+            self.logger.info(f"用户选择导入 {len(paths)} 张图片")
             self._run_detect(paths)
 
     def _on_import_folder(self):
         folder = QFileDialog.getExistingDirectory(self, "选择文件夹")
         if not folder:
             return
+        self.logger.info(f"用户选择导入文件夹: {folder}")
         exts = FaceEngine.SUPPORTED_FORMATS
         paths = []
         # 递归扫描所有子文件夹
@@ -352,8 +369,10 @@ class MainWindow(QMainWindow):
                 if os.path.splitext(f)[1].lower() in exts:
                     paths.append(os.path.join(root, f))
         if not paths:
+            self.logger.warning(f"文件夹 {folder} 中没有找到支持的图片格式")
             QMessageBox.information(self, "提示", "该文件夹及其子文件夹下没有找到支持的图片格式。")
             return
+        self.logger.info(f"扫描到 {len(paths)} 张图片")
         self._run_detect(paths, folder)
 
     def _on_detect_all(self):
@@ -362,6 +381,7 @@ class MainWindow(QMainWindow):
         if not images:
             QMessageBox.information(self, "提示", "请先导入图片。")
             return
+        self.logger.info(f"开始重新识别 {len(images)} 张图片")
         paths = [row["file_path"] for row in images]
         # 清空旧人脸数据，重新检测（faces 会级联删除）
         for row in images:
@@ -375,6 +395,7 @@ class MainWindow(QMainWindow):
             return
 
         threshold = self._thresh_slider.value() / 100.0
+        self.logger.info(f"开始人脸聚类，阈值={threshold:.2f}，共 {len(faces)} 张人脸")
 
         self._statusbar.showMessage("正在进行人脸归类...")
         self._set_actions_enabled(False)
@@ -406,6 +427,7 @@ class MainWindow(QMainWindow):
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
         )
         if ret == QMessageBox.StandardButton.Yes:
+            self.logger.warning("用户执行清空所有数据操作")
             self.db.clear_all_persons()
             for row in self.db.get_all_images():
                 self.db.delete_image(row["id"])
@@ -415,6 +437,52 @@ class MainWindow(QMainWindow):
             self._face_panel.update_faces(None, [])
             self._person_panel.refresh()
             self._statusbar.showMessage("数据已清空")
+            self.logger.info("数据清空完成")
+    
+    def _on_set_cache_dir(self):
+        """设置缓存目录"""
+        current_dir = self.config.cache_dir
+        new_dir = QFileDialog.getExistingDirectory(
+            self, "选择缓存目录", current_dir,
+            QFileDialog.Option.ShowDirsOnly
+        )
+        if not new_dir:
+            return
+        
+        if new_dir == current_dir:
+            QMessageBox.information(self, "提示", "缓存目录未改变")
+            return
+        
+        # 警告用户更改缓存目录的影响
+        ret = QMessageBox.question(
+            self, "确认更改缓存目录",
+            f"即将更改缓存目录为:\n{new_dir}\n\n"
+            "注意：\n"
+            "1. 数据库文件将存储到新目录\n"
+            "2. 当前加载的数据将被清空\n"
+            "3. 程序将重新启动以应用更改\n\n"
+            "是否继续？",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+        )
+        
+        if ret == QMessageBox.StandardButton.Yes:
+            self.logger.info(f"用户更改缓存目录: {current_dir} -> {new_dir}")
+            try:
+                self.config.cache_dir = new_dir
+                self.logger.info(f"缓存目录已更新，新的数据库路径: {self.config.database_path}")
+                QMessageBox.information(
+                    self, "成功",
+                    f"缓存目录已更改为:\n{new_dir}\n\n"
+                    f"数据库路径: {self.config.database_path}\n"
+                    f"日志路径: {self.config.log_path}\n\n"
+                    "请重启程序以应用更改。"
+                )
+            except Exception as e:
+                self.logger.error(f"设置缓存目录失败: {e}", exc_info=True)
+                QMessageBox.critical(
+                    self, "错误",
+                    f"设置缓存目录失败:\n{str(e)}"
+                )
 
     # ---- 后台检测 ----
 
@@ -454,6 +522,7 @@ class MainWindow(QMainWindow):
         self._set_actions_enabled(True)
         person_count = len(result)
         face_count = sum(len(v) for v in result.values())
+        self.logger.info(f"聚类完成: {face_count} 张人脸归为 {person_count} 个人物")
         self._statusbar.showMessage(f"归类完成: {face_count} 张人脸归为 {person_count} 个人物")
         self._person_panel.refresh()
 
