@@ -10,11 +10,34 @@ from core.database import DatabaseManager
 from core.face_engine import FaceEngine
 from ui.main_window import MainWindow
 
-# 模型文件路径（相对于项目根目录）
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-DETECTION_MODEL = os.path.join(BASE_DIR, "models", "face_detection_yunet_2023mar.onnx")
-RECOGNITION_MODEL = os.path.join(BASE_DIR, "models", "face_recognition_sface_2021dec.onnx")
-DB_PATH = os.path.join(BASE_DIR, "faceseeker.db")
+
+def get_app_dir():
+    """获取程序所在目录（源代码运行时为main.py目录，打包后为exe目录）"""
+    if getattr(sys, 'frozen', False):
+        # 打包后运行：返回exe所在目录
+        return os.path.dirname(sys.executable)
+    else:
+        # 源代码运行：返回main.py所在目录
+        return os.path.dirname(os.path.abspath(__file__))
+
+
+def get_resource_path(relative_path):
+    """获取资源文件路径（打包后从临时目录读取，源代码运行从项目目录读取）"""
+    if getattr(sys, 'frozen', False):
+        # 打包后：资源文件在PyInstaller的临时目录
+        base_path = sys._MEIPASS
+    else:
+        # 源代码运行：资源文件在项目目录
+        base_path = os.path.dirname(os.path.abspath(__file__))
+    return os.path.join(base_path, relative_path)
+
+
+# 模型文件路径（只读资源，从资源目录读取）
+DETECTION_MODEL = get_resource_path(os.path.join("models", "face_detection_yunet_2023mar.onnx"))
+RECOGNITION_MODEL = get_resource_path(os.path.join("models", "face_recognition_sface_2021dec.onnx"))
+
+# 数据库文件路径（用户数据，始终放在程序所在目录）
+DB_PATH = os.path.join(get_app_dir(), "faceseeker.db")
 
 
 def main():
