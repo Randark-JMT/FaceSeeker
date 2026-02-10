@@ -62,7 +62,7 @@ class FaceEngine:
     SUPPORTED_FORMATS = {".jpg", ".jpeg", ".png", ".bmp", ".tiff", ".webp"}
 
     # 最小人脸尺寸（宽或高小于此值的检测结果将被丢弃，太小的人脸特征不可靠）
-    MIN_FACE_SIZE = 30
+    MIN_FACE_SIZE = 50
 
     def __init__(
         self,
