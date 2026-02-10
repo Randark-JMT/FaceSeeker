@@ -12,6 +12,7 @@ from PySide6.QtWidgets import (
 from PySide6.QtCore import Qt, QThread, Signal
 from PySide6.QtGui import QAction
 
+from ui import APP_NAME, APP_VERSION
 from core.config import Config
 from core.logger import get_logger, log_opencv_error, log_exception
 from core.database import DatabaseManager
@@ -153,7 +154,7 @@ class MainWindow(QMainWindow):
         self._current_image_id: int | None = None
         self._worker: QThread | None = None
 
-        self.setWindowTitle("FaceSeeker - 人脸识别系统")
+        self.setWindowTitle(f"{APP_NAME} {APP_VERSION}")
         self.resize(1280, 800)
 
         self._build_toolbar()
