@@ -61,11 +61,14 @@ class FaceEngine:
 
     SUPPORTED_FORMATS = {".jpg", ".jpeg", ".png", ".bmp", ".tiff", ".webp"}
 
+    # 最小人脸尺寸（宽或高小于此值的检测结果将被丢弃，太小的人脸特征不可靠）
+    MIN_FACE_SIZE = 30
+
     def __init__(
         self,
         detection_model: str,
         recognition_model: str,
-        score_threshold: float = 0.6,
+        score_threshold: float = 0.7,
         nms_threshold: float = 0.3,
         top_k: int = 5000,
         backend_id: int | None = None,
@@ -114,8 +117,14 @@ class FaceEngine:
             self._backend_id, self._target_id,
         )
 
-    def detect(self, image: np.ndarray) -> list[FaceData]:
-        """检测图像中所有人脸"""
+    def detect(self, image: np.ndarray, min_face_size: int | None = None) -> list[FaceData]:
+        """检测图像中所有人脸
+
+        Args:
+            image: 输入图像 (BGR)
+            min_face_size: 最小人脸尺寸，低于此值的检测结果会被过滤。
+                           None 时使用类默认值 MIN_FACE_SIZE。
+        """
         h, w = image.shape[:2]
         self.detector.setInputSize((w, h))
         _, raw_faces = self.detector.detect(image)
@@ -123,9 +132,16 @@ class FaceEngine:
         if raw_faces is None or len(raw_faces) == 0:
             return []
 
+        min_sz = min_face_size if min_face_size is not None else self.MIN_FACE_SIZE
+
         results = []
         for face_row in raw_faces:
             bbox = tuple(map(int, face_row[:4]))
+            fw, fh = bbox[2], bbox[3]
+            # 过滤过小的人脸（特征不可靠）
+            if fw < min_sz or fh < min_sz:
+                continue
+
             landmarks = [
                 (int(face_row[4 + j * 2]), int(face_row[5 + j * 2]))
                 for j in range(5)
@@ -135,9 +151,13 @@ class FaceEngine:
         return results
 
     def extract_feature(self, image: np.ndarray, face: FaceData) -> np.ndarray:
-        """提取单张人脸的特征向量"""
+        """提取单张人脸的特征向量（L2 归一化）"""
         aligned = self.recognizer.alignCrop(image, face.to_detect_array())
         feature = self.recognizer.feature(aligned)
+        # L2 归一化，确保后续余弦相似度计算的数值稳定性
+        norm = np.linalg.norm(feature)
+        if norm > 0:
+            feature = feature / norm
         face.feature = feature
         return feature
 
