@@ -87,14 +87,20 @@ def _normalize_image(img: np.ndarray) -> np.ndarray | None:
 
 
 def detect_backends() -> tuple[int, int, str]:
-    """检测可用的 DNN 后端，优先级: CUDA > OpenCL > CPU。返回 (backend_id, target_id, name)"""
+    """检测可用的 DNN 后端，优先级: CUDA > CPU。
+    
+    注: OpenCL (ocl4dnn) 对 YuNet/SFace 等小型模型反而更慢（CPU↔GPU 搬运开销大），
+    实测 RTX 4060 上 OpenCL 比 CPU 慢约 5 倍，因此不作为候选。
+    如需 GPU 加速，请安装支持 CUDA 的 OpenCV 构建版本。
+    
+    返回 (backend_id, target_id, name)
+    """
     logger = get_logger()
 
     # 候选后端列表（按优先级排列）
+    # OpenCL 对小型 DNN 模型无加速效果，故不纳入
     candidates = [
-        # (backend_id, target_id, display_name)
-        (cv2.dnn.DNN_BACKEND_CUDA,   cv2.dnn.DNN_TARGET_CUDA,       "CUDA"),
-        (cv2.dnn.DNN_BACKEND_OPENCV, cv2.dnn.DNN_TARGET_OPENCL,     "OpenCL"),
+        (cv2.dnn.DNN_BACKEND_CUDA, cv2.dnn.DNN_TARGET_CUDA, "CUDA"),
     ]
 
     try:

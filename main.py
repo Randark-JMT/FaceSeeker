@@ -105,11 +105,6 @@ def main():
         )
         sys.exit(1)
 
-    # 设置 OpenCL DNN 内核缓存目录（避免每次启动重复编译 + 减少警告）
-    ocl_cache_dir = os.path.join(config.data_dir, "ocl_cache")
-    os.makedirs(ocl_cache_dir, exist_ok=True)
-    os.environ.setdefault("OPENCV_OCL4DNN_CONFIG_PATH", ocl_cache_dir)
-
     # 初始化核心组件
     try:
         logger.info("初始化数据库...")

@@ -51,19 +51,22 @@ class DetectWorker(QThread):
                  base_folder: str = "", thumb_cache: ThumbCache | None = None,
                  num_workers: int | None = None):
         super().__init__()
+        self.logger = get_logger()
         self.engine = engine
         self.db = db
         self.file_paths = file_paths
         self.base_folder = base_folder
         self.thumb_cache = thumb_cache
-        # GPU 后端（CUDA / OpenCL）时并行意义不大，CPU 时按核心数并行
+        # CUDA 时并行意义不大（GPU 内部已并行），CPU 时按核心数并行
         if num_workers is None:
-            if engine.backend_name in ("CUDA", "OpenCL"):
+            if engine.backend_name == "CUDA":
                 self.num_workers = 1
             else:
-                self.num_workers = min(os.cpu_count() or 4, 4)
+                self.num_workers = min(os.cpu_count(), 4)
         else:
             self.num_workers = num_workers
+        self.logger.info(f"DetectWorker 初始化完成，后端: {engine.backend_name}, 线程数: {self.num_workers}")
+        
 
     def _process_one(self, engine: FaceEngine, fpath: str):
         """在工作线程中处理单张图片（纯计算，不访问数据库）"""
@@ -94,7 +97,7 @@ class DetectWorker(QThread):
         pending_paths = [p for p in self.file_paths if not self.db.image_exists(p)]
         skipped = total - len(pending_paths)
         if skipped > 0:
-            get_logger().info(f"跳过 {skipped} 张已存在的图片")
+            self.logger.info(f"跳过 {skipped} 张已存在的图片")
 
         # 多线程引擎
         _local = threading.local()
