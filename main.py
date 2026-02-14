@@ -26,7 +26,7 @@ def main():
         QWidget {
             background-color: #1e1e1e;
             color: #d4d4d4;
-            font-size: 13px;
+            font-size: 10pt;
         }
         QToolBar {
             background-color: #2d2d2d;

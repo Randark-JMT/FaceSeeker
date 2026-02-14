@@ -19,6 +19,7 @@ class DatabaseManager:
         self.logger.info(f"开始连接数据库: {db_path}")
         self._connect()
         self._init_db()
+        self._migrate()
         self.logger.info("数据库初始化完成")
 
     def _connect(self):
@@ -44,9 +45,10 @@ class DatabaseManager:
                 file_path TEXT NOT NULL UNIQUE,
                 filename TEXT NOT NULL,
                 relative_path TEXT,
-                width INTEGER,
-                height INTEGER,
+                width INTEGER DEFAULT 0,
+                height INTEGER DEFAULT 0,
                 face_count INTEGER DEFAULT 0,
+                analyzed INTEGER DEFAULT 0,
                 added_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             );
 
@@ -77,8 +79,19 @@ class DatabaseManager:
             CREATE INDEX IF NOT EXISTS idx_faces_image_id ON faces(image_id);
             CREATE INDEX IF NOT EXISTS idx_faces_person_id ON faces(person_id);
             CREATE INDEX IF NOT EXISTS idx_faces_has_feature ON faces(id) WHERE feature IS NOT NULL;
+            CREATE INDEX IF NOT EXISTS idx_images_analyzed ON images(analyzed);
         """)
         self.conn.commit()
+
+    def _migrate(self):
+        """数据库迁移：为旧版数据库添加缺失的列"""
+        columns = {row[1] for row in self.conn.execute("PRAGMA table_info(images)").fetchall()}
+        if "analyzed" not in columns:
+            self.logger.info("数据库迁移：添加 analyzed 列")
+            self.conn.execute("ALTER TABLE images ADD COLUMN analyzed INTEGER DEFAULT 0")
+            # 旧数据库中已有的图片视为已分析
+            self.conn.execute("UPDATE images SET analyzed = 1")
+            self.conn.commit()
 
     # ---- Images ----
 
@@ -88,18 +101,49 @@ class DatabaseManager:
         ).fetchone()
         return row is not None
 
-    def add_image(self, file_path: str, filename: str, width: int, height: int, face_count: int = 0, relative_path: str = "") -> int:
+    def get_existing_paths(self) -> set[str]:
+        """获取所有已注册的文件路径集合（用于批量去重，避免逐条查询）"""
+        rows = self.conn.execute("SELECT file_path FROM images").fetchall()
+        return {row[0] for row in rows}
+
+    def add_image(self, file_path: str, filename: str, width: int = 0, height: int = 0,
+                  face_count: int = 0, relative_path: str = "", analyzed: int = 0) -> int:
         cur = self.conn.execute(
-            "INSERT INTO images (file_path, filename, relative_path, width, height, face_count) VALUES (?, ?, ?, ?, ?, ?)",
-            (file_path, filename, relative_path, width, height, face_count),
+            "INSERT INTO images (file_path, filename, relative_path, width, height, face_count, analyzed) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?)",
+            (file_path, filename, relative_path, width, height, face_count, analyzed),
         )
         self._maybe_commit()
         return cur.lastrowid
+
+    def mark_image_analyzed(self, image_id: int, width: int, height: int, face_count: int):
+        """标记图片为已分析，同时更新尺寸和人脸数"""
+        self.conn.execute(
+            "UPDATE images SET analyzed = 1, width = ?, height = ?, face_count = ? WHERE id = ?",
+            (width, height, face_count, image_id),
+        )
+        self._maybe_commit()
 
     def get_image_count(self) -> int:
         """获取图片总数（轻量查询）"""
         row = self.conn.execute("SELECT COUNT(*) FROM images").fetchone()
         return row[0] if row else 0
+
+    def get_analyzed_count(self) -> int:
+        """获取已分析图片数量"""
+        row = self.conn.execute("SELECT COUNT(*) FROM images WHERE analyzed = 1").fetchone()
+        return row[0] if row else 0
+
+    def get_unanalyzed_count(self) -> int:
+        """获取未分析图片数量"""
+        row = self.conn.execute("SELECT COUNT(*) FROM images WHERE analyzed = 0").fetchone()
+        return row[0] if row else 0
+
+    def get_unanalyzed_images(self) -> list:
+        """获取所有未分析的图片"""
+        return self.conn.execute(
+            "SELECT * FROM images WHERE analyzed = 0 ORDER BY id"
+        ).fetchall()
 
     def get_all_images(self) -> list:
         return self.conn.execute(
@@ -150,14 +194,7 @@ class DatabaseManager:
         return cur.lastrowid
 
     def add_faces_batch(self, faces: list[tuple]) -> list[int]:
-        """批量插入人脸数据（在已有事务中调用效果最佳）
-        
-        Args:
-            faces: [(image_id, bbox, landmarks, score, feature, person_id), ...]
-        
-        Returns:
-            插入的 face_id 列表
-        """
+        """批量插入人脸数据（在已有事务中调用效果最佳）"""
         ids = []
         for image_id, bbox, landmarks, score, feature, person_id in faces:
             feature_blob = feature.tobytes() if feature is not None else None
@@ -293,21 +330,14 @@ class DatabaseManager:
         ).fetchall()
 
     def clear_all_persons(self, keep_named: bool = False):
-        """清除人物归类
-        
-        Args:
-            keep_named: 如果为True，则保留已命名的人物（非"未命名"），
-                       只清除未命名的人物归类
-        """
+        """清除人物归类"""
         if keep_named:
-            # 批量操作未命名的人物，避免逐行 DELETE
             self.conn.execute(
                 "UPDATE faces SET person_id = NULL WHERE person_id IN "
                 "(SELECT id FROM persons WHERE name = '未命名')"
             )
             self.conn.execute("DELETE FROM persons WHERE name = '未命名'")
         else:
-            # 清除所有人物
             self.conn.execute("UPDATE faces SET person_id = NULL")
             self.conn.execute("DELETE FROM persons")
         self._maybe_commit()

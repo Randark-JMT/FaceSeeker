@@ -87,7 +87,7 @@ class DataDirDialog(QDialog):
         group_layout.addWidget(self._radio_default)
 
         default_path_label = QLabel(f"  📂  {self.config.default_data_dir}")
-        default_path_label.setStyleSheet("color: #888; font-size: 12px; margin-left: 20px;")
+        default_path_label.setStyleSheet("color: #888; font-size: 9pt; margin-left: 20px;")
         default_path_label.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
         group_layout.addWidget(default_path_label)
 
@@ -119,7 +119,7 @@ class DataDirDialog(QDialog):
         # ---- 数据文件检测状态 ----
         self._status_label = QLabel("")
         self._status_label.setWordWrap(True)
-        self._status_label.setStyleSheet("font-size: 12px; padding: 6px;")
+        self._status_label.setStyleSheet("font-size: 9pt; padding: 6px;")
         self._status_label.setVisible(False)
         layout.addWidget(self._status_label)
 
@@ -152,7 +152,7 @@ class DataDirDialog(QDialog):
                 margin-top: 4px;
             }
             QRadioButton {
-                font-size: 13px;
+                font-size: 10pt;
                 spacing: 6px;
             }
             QRadioButton::indicator {
@@ -171,7 +171,7 @@ class DataDirDialog(QDialog):
                 border-radius: 3px;
                 padding: 5px 14px;
                 color: #fff;
-                font-size: 13px;
+                font-size: 10pt;
             }
             QPushButton:hover {
                 background-color: #1177bb;
@@ -223,7 +223,7 @@ class DataDirDialog(QDialog):
                 f"    将直接加载已有数据，不会丢失。"
             )
             self._status_label.setStyleSheet(
-                "font-size: 12px; padding: 6px; color: #4ec9b0; "
+                "font-size: 9pt; padding: 6px; color: #4ec9b0; "
                 "background-color: #1a3a2a; border-radius: 3px;"
             )
             self._status_label.setVisible(True)
@@ -232,7 +232,7 @@ class DataDirDialog(QDialog):
                 "📁  该目录中没有已有数据文件，将创建新的数据库。"
             )
             self._status_label.setStyleSheet(
-                "font-size: 12px; padding: 6px; color: #888; "
+                "font-size: 9pt; padding: 6px; color: #888; "
                 "background-color: #2a2a2a; border-radius: 3px;"
             )
             self._status_label.setVisible(True)

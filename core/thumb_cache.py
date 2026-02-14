@@ -72,6 +72,32 @@ class ThumbCache:
             except OSError as e:
                 self._logger.warning(f"写入缩略图缓存失败 face_id={face_id}: {e}")
 
+    def save_from_bytes(self, face_id: int, jpeg_bytes: bytes):
+        """直接写入已编码的 JPEG 字节（用于从 worker 线程传递预编码数据）"""
+        path = self._cache_path(face_id)
+        try:
+            with open(path, 'wb') as f:
+                f.write(jpeg_bytes)
+        except OSError as e:
+            self._logger.warning(f"写入缩略图缓存失败 face_id={face_id}: {e}")
+
+    @staticmethod
+    def encode_crop(cv_image: np.ndarray, bbox: tuple, padding: float = 0.2) -> bytes | None:
+        """在 worker 线程中裁剪+编码人脸缩略图为 JPEG 字节（不需要 face_id）
+        
+        返回极小的 JPEG 字节（2-5 KB），替代传回完整图像（数 MB）。
+        """
+        from core.face_engine import FaceEngine
+        crop = FaceEngine.crop_face(cv_image, bbox, padding)
+        if crop is None or crop.size == 0:
+            return None
+        h, w = crop.shape[:2]
+        scale = ThumbCache.THUMB_SIZE / max(h, w, 1)
+        new_w, new_h = max(1, int(w * scale)), max(1, int(h * scale))
+        resized = cv2.resize(crop, (new_w, new_h), interpolation=cv2.INTER_AREA)
+        ok, buf = cv2.imencode('.jpg', resized, [cv2.IMWRITE_JPEG_QUALITY, ThumbCache.JPEG_QUALITY])
+        return buf.tobytes() if ok else None
+
     def save_from_image(self, face_id: int, cv_image: np.ndarray, bbox: tuple, padding: float = 0.2):
         """从完整图像中裁剪人脸区域并保存到缓存"""
         from core.face_engine import FaceEngine

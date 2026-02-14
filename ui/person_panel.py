@@ -131,7 +131,7 @@ class ClickableMoreLabel(QLabel):
         self.setFixedSize(56, 56)
         self.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.setStyleSheet(
-            "border: 1px solid #555; color: #4a9eff; font-size: 14px; font-weight: bold;"
+            "border: 1px solid #555; color: #4a9eff; font-size: 11pt; font-weight: bold;"
         )
         self.setCursor(Qt.CursorShape.PointingHandCursor)
         self.setToolTip("双击加载更多（每次10张）")
@@ -173,7 +173,7 @@ class PersonGroup(QFrame):
         # 标题行
         header = QHBoxLayout()
         person_id_label = QLabel(f"P{person_id}")
-        person_id_label.setStyleSheet("font-weight: bold; color: #4a9eff; font-size: 13px;")
+        person_id_label.setStyleSheet("font-weight: bold; color: #4a9eff; font-size: 10pt;")
         person_id_label.setFixedWidth(40)
         header.addWidget(person_id_label)
 
@@ -333,13 +333,13 @@ class PersonPanel(QWidget):
         header_layout.setSpacing(8)
 
         title = QLabel("人物归类")
-        title.setStyleSheet("font-weight: bold; font-size: 14px; padding: 4px;")
+        title.setStyleSheet("font-weight: bold; font-size: 11pt; padding: 4px;")
         header_layout.addWidget(title)
 
         header_layout.addStretch()
 
         sort_label = QLabel("排序:")
-        sort_label.setStyleSheet("font-size: 12px;")
+        sort_label.setStyleSheet("font-size: 9pt;")
         header_layout.addWidget(sort_label)
 
         self._sort_combo = QComboBox()
@@ -357,7 +357,7 @@ class PersonPanel(QWidget):
         self._order_btn.setFixedSize(30, 24)
         self._order_btn.setToolTip("切换升序/降序")
         self._order_btn.setStyleSheet(
-            "QPushButton { background: #2a2a2a; border: 1px solid #555; font-size: 16px; }"
+            "QPushButton { background: #2a2a2a; border: 1px solid #555; font-size: 12pt; }"
             "QPushButton:hover { background: #3a3a3a; }"
         )
         self._order_btn.clicked.connect(self._toggle_sort_order)

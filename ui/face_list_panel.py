@@ -71,7 +71,7 @@ class FaceListPanel(QWidget):
         layout.setContentsMargins(0, 0, 0, 0)
 
         title = QLabel("人脸列表")
-        title.setStyleSheet("font-weight: bold; font-size: 14px; padding: 4px;")
+        title.setStyleSheet("font-weight: bold; font-size: 11pt; padding: 4px;")
         layout.addWidget(title)
 
         # 滚动区域
