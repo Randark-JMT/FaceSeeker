@@ -152,16 +152,15 @@ class FaceCluster:
                 all_updates: list[tuple[int, int]] = []
                 result: dict[int, list[int]] = {}
                 for person_id, fids in assigned_to_existing.items():
-                    # 更新人脸数量
-                    all_person_faces = self.db.get_faces_by_person(person_id)
-                    self.db.update_person_face_count(person_id, len(all_person_faces) + len(fids))
-                    
-                    # 更新人物特征
+                    for fid in fids:
+                        all_updates.append((person_id, fid))
+                    result[person_id] = fids
+
+                    # 用已有代表特征 + 新人脸特征计算平均值
                     person_feats = []
-                    for face_row in all_person_faces:
-                        if face_row["feature"]:
-                            feat = DatabaseManager.feature_from_blob(face_row["feature"])
-                            person_feats.append(feat.flatten())
+                    existing_feat = self.db.get_person_feature(person_id)
+                    if existing_feat is not None:
+                        person_feats.append(existing_feat.flatten())
                     for fid in fids:
                         face_row = self.db.get_face(fid)
                         if face_row and face_row["feature"]:
@@ -171,11 +170,10 @@ class FaceCluster:
                         avg_feat = np.mean(person_feats, axis=0)
                         avg_feat = avg_feat / max(np.linalg.norm(avg_feat), 1e-10)
                         self.db.update_person_feature(person_id, avg_feat)
-                    
-                    for fid in fids:
-                        all_updates.append((person_id, fid))
-                    result[person_id] = fids
-                    
+
+                    existing_count = self.db.get_person_face_count(person_id)
+                    self.db.update_person_face_count(person_id, existing_count + len(fids))
+
                 self.db.batch_update_face_persons(all_updates)
                 self.db.commit()
                 self.logger.info(f"所有人脸已分配到已有人物，更新了 {len(result)} 个人物")
@@ -222,81 +220,77 @@ class FaceCluster:
                     f"比对进度: 第 {processed_blocks}/{total_blocks} 块 "
                     f"(行 {i_start}-{i_end-1}/{n-1})")
 
-        # 收集分组（索引 → face_id）
-        groups: dict[int, list[int]] = defaultdict(list)
+        # 收集分组：face_id 列表 + 特征索引列表（O(n) 一次遍历）
+        groups: dict[int, list[int]] = defaultdict(list)          # root → [face_id]
+        group_indices: dict[int, list[int]] = defaultdict(list)   # root → [feat_matrix 行号]
         for idx in range(n):
             root = uf.find(idx)
             groups[root].append(face_ids[idx])
+            group_indices[root].append(idx)
 
         _report(total_blocks, total_blocks,
                 f"比对完成，正在写入 {len(groups)} 个人物分组...")
-        
+
         self.logger.info(f"人脸相似度比对完成，发现 {len(groups)} 个聚类组")
 
-        # 写入数据库（单事务批量提交）
+        # ★ 预计算每个组的代表性特征（纯 numpy，不涉及 DB）
+        group_avg_feats: dict[int, np.ndarray] = {}
+        for root_idx, indices in group_indices.items():
+            avg_feat = np.mean(feat_matrix[indices], axis=0)
+            norm = np.linalg.norm(avg_feat)
+            if norm > 1e-10:
+                avg_feat /= norm
+            group_avg_feats[root_idx] = avg_feat
+
+        # 写入数据库（单事务，最少 SQL 次数）
         result: dict[int, list[int]] = {}
         self.db.begin()
         try:
             all_updates: list[tuple[int, int]] = []
-            
-            # 处理新增的人物组
+
+            # 处理新增的人物组（每组只需 1 次 INSERT + 2 次 UPDATE）
             for root_idx, group_face_ids in groups.items():
                 person_id = self.db.add_person()
                 self.db.update_person_face_count(person_id, len(group_face_ids))
-                
-                # 计算该人物的代表性特征（所有人脸特征的平均值）
-                group_feats = []
-                for idx in range(n):
-                    if uf.find(idx) == root_idx:
-                        group_feats.append(feat_matrix[idx])
-                if group_feats:
-                    avg_feat = np.mean(group_feats, axis=0)
-                    avg_feat = avg_feat / max(np.linalg.norm(avg_feat), 1e-10)  # L2归一化
-                    self.db.update_person_feature(person_id, avg_feat)
-                
+                self.db.update_person_feature(person_id, group_avg_feats[root_idx])
+
                 for fid in group_face_ids:
                     all_updates.append((person_id, fid))
                 result[person_id] = group_face_ids
-            
-            # 处理匹配到已有人物的人脸
+
+            # 处理匹配到已有人物的人脸（增量模式时才有）
             for person_id, fids in assigned_to_existing.items():
                 for fid in fids:
                     all_updates.append((person_id, fid))
-                
-                # 更新人物的人脸数量和特征
-                all_person_faces = self.db.get_faces_by_person(person_id)
-                self.db.update_person_face_count(person_id, len(all_person_faces) + len(fids))
-                
-                # 重新计算该人物的代表性特征
+
+                # 用已有特征 + 新人脸特征计算平均值
                 person_feats = []
-                for face_row in all_person_faces:
-                    if face_row["feature"]:
-                        feat = DatabaseManager.feature_from_blob(face_row["feature"])
-                        person_feats.append(feat.flatten())
-                # 加上新分配的人脸
+                existing_feat = self.db.get_person_feature(person_id)
+                if existing_feat is not None:
+                    person_feats.append(existing_feat.flatten())
                 for fid in fids:
                     face_row = self.db.get_face(fid)
                     if face_row and face_row["feature"]:
                         feat = DatabaseManager.feature_from_blob(face_row["feature"])
                         person_feats.append(feat.flatten())
-                
+
                 if person_feats:
                     avg_feat = np.mean(person_feats, axis=0)
                     avg_feat = avg_feat / max(np.linalg.norm(avg_feat), 1e-10)
                     self.db.update_person_feature(person_id, avg_feat)
-                
-                # result 中存储该人物新增的 face_ids（用于日志统计）
+
+                existing_count = self.db.get_person_face_count(person_id)
+                self.db.update_person_face_count(person_id, existing_count + len(fids))
+
                 if person_id not in result:
                     result[person_id] = []
                 result[person_id].extend(fids)
-            
-            # 批量更新 face -> person 映射
+
+            # 一次性批量更新所有 face → person 映射
             self.db.batch_update_face_persons(all_updates)
             self.db.commit()
-            total_new_persons = len(groups)
-            total_updated_persons = len(assigned_to_existing)
-            self.logger.info(f"聚类结果已写入数据库，新建 {total_new_persons} 个人物，"
-                           f"更新 {total_updated_persons} 个已有人物")
+            self.logger.info(f"聚类结果已写入数据库，新建 {len(groups)} 个人物，"
+                           f"更新 {len(assigned_to_existing)} 个已有人物")
         except Exception as e:
             self.logger.error(f"聚类写入数据库失败: {e}", exc_info=True)
             self.db.rollback()
