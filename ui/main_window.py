@@ -602,7 +602,7 @@ class MainWindow(QMainWindow):
             return
 
         threshold = self._thresh_slider.value() / 100.0
-        self.logger.info(f"开始人脸聚类，阈值={threshold:.2f}，共 {face_count} 张人脸")
+        self.logger.info(f"开始人脸聚类（全量），阈值={threshold:.2f}，共 {face_count} 张人脸")
 
         self._statusbar.showMessage("正在进行人脸归类...")
         self._set_actions_enabled(False)
@@ -615,7 +615,8 @@ class MainWindow(QMainWindow):
         self._cluster_progress.setMinimumDuration(0)
         self._cluster_progress.setValue(0)
 
-        worker = ClusterWorker(self.cluster_engine, threshold, incremental=True)
+        # 全量模式：每次清空旧归类结果后重新聚类，方便调试不同阈值
+        worker = ClusterWorker(self.cluster_engine, threshold, incremental=False)
         worker.progress.connect(self._on_cluster_progress)
         worker.finished_cluster.connect(self._on_cluster_done)
         worker.finished.connect(worker.deleteLater)
