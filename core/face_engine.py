@@ -191,7 +191,10 @@ class FaceEngine:
 
         self._backend_id = backend_id
         self._target_id = target_id
-        
+        # 仅当 CUDA 下出现 cuDNN 错误时，用 CPU 做单次重试；懒创建，不替换主引擎
+        self._cpu_detector: Optional[cv2.FaceDetectorYN] = None
+        self._cpu_recognizer: Optional[cv2.FaceRecognizerSF] = None
+
         self.logger.info(f"初始化人脸检测器: {detection_model}")
         self.logger.info(f"初始化人脸识别器: {recognition_model}")
 
@@ -203,6 +206,34 @@ class FaceEngine:
         self.recognizer = cv2.FaceRecognizerSF.create(
             recognition_model, "", backend_id, target_id,
         )
+
+    def _is_cuda_cudnn_error(self, e: Exception) -> bool:
+        """判断是否为 CUDA/cuDNN 运行时错误（如卷积算法不可用），此类错误可用 CPU 单次重试。"""
+        msg = str(e).lower()
+        return (
+            "cudnn" in msg and ("algorithm" in msg or "convolution" in msg)
+        ) or (
+            hasattr(e, "code") and getattr(e, "code", None) == -217
+        )
+
+    def _get_cpu_detector(self) -> cv2.FaceDetectorYN:
+        """懒创建并返回仅用于 cuDNN 失败时单次重试的 CPU 检测器，主引擎仍用 CUDA。"""
+        if self._cpu_detector is None:
+            self._cpu_detector = cv2.FaceDetectorYN.create(
+                self._detection_model, "", (320, 320),
+                self._score_threshold, self._nms_threshold, self._top_k,
+                cv2.dnn.DNN_BACKEND_DEFAULT, cv2.dnn.DNN_TARGET_CPU,
+            )
+        return self._cpu_detector
+
+    def _get_cpu_recognizer(self) -> cv2.FaceRecognizerSF:
+        """懒创建并返回仅用于 cuDNN 失败时单次重试的 CPU 识别器，主引擎仍用 CUDA。"""
+        if self._cpu_recognizer is None:
+            self._cpu_recognizer = cv2.FaceRecognizerSF.create(
+                self._recognition_model, "",
+                cv2.dnn.DNN_BACKEND_DEFAULT, cv2.dnn.DNN_TARGET_CPU,
+            )
+        return self._cpu_recognizer
 
     def clone(self) -> "FaceEngine":
         """创建一个独立的引擎实例（用于多线程，每个线程需要自己的 detector 实例）"""
@@ -259,7 +290,19 @@ class FaceEngine:
                     detect_img = np.ascontiguousarray(detect_img)
 
             self.detector.setInputSize((dw, dh))
-            _, raw_faces = self.detector.detect(detect_img)
+            try:
+                _, raw_faces = self.detector.detect(detect_img)
+            except Exception as e:
+                if (
+                    self._target_id == cv2.dnn.DNN_TARGET_CUDA
+                    and self._is_cuda_cudnn_error(e)
+                ):
+                    log_opencv_error("FaceEngine.detect", e, suppress=True)
+                    cpu_det = self._get_cpu_detector()
+                    cpu_det.setInputSize((dw, dh))
+                    _, raw_faces = cpu_det.detect(detect_img)
+                else:
+                    raise
 
             if raw_faces is None or len(raw_faces) == 0:
                 return []
@@ -318,14 +361,36 @@ class FaceEngine:
             return np.zeros(128, dtype=np.float32)
         
         try:
-            aligned = self.recognizer.alignCrop(image, face.to_detect_array())
+            try:
+                aligned = self.recognizer.alignCrop(image, face.to_detect_array())
+            except Exception as e:
+                if (
+                    self._target_id == cv2.dnn.DNN_TARGET_CUDA
+                    and self._is_cuda_cudnn_error(e)
+                ):
+                    log_opencv_error("FaceEngine.extract_feature", e, suppress=True)
+                    aligned = self._get_cpu_recognizer().alignCrop(
+                        image, face.to_detect_array()
+                    )
+                else:
+                    raise
             # 验证对齐后的图像是否有效
             if aligned is None or aligned.size == 0:
                 self.logger.warning("extract_feature: 人脸对齐失败")
                 face.feature = None
                 return np.zeros(128, dtype=np.float32)
-            
-            feature = self.recognizer.feature(aligned)
+
+            try:
+                feature = self.recognizer.feature(aligned)
+            except Exception as e:
+                if (
+                    self._target_id == cv2.dnn.DNN_TARGET_CUDA
+                    and self._is_cuda_cudnn_error(e)
+                ):
+                    log_opencv_error("FaceEngine.extract_feature", e, suppress=True)
+                    feature = self._get_cpu_recognizer().feature(aligned)
+                else:
+                    raise
             # L2 归一化，确保后续余弦相似度计算的数值稳定性
             norm = np.linalg.norm(feature)
             if norm > 0:

@@ -72,9 +72,9 @@ class DetectWorker(QThread):
         if num_workers is None:
             if engine.backend_name == "CUDA":
                 # 多线程向 GPU 提交任务，提高利用率（单线程时 GPU 常处于等待状态）
-                self.num_workers = min(6, (os.cpu_count() or 4) + 2)
+                self.num_workers = min(os.cpu_count() or 4, 6)
             else:
-                self.num_workers = min(os.cpu_count() or 4, 4)
+                self.num_workers = max(os.cpu_count() or 4, 4)
         else:
             self.num_workers = num_workers
         self.logger.info(f"DetectWorker: {len(image_items)} 张待检测，线程数: {self.num_workers}，模糊阈值: {self.blur_threshold}")
