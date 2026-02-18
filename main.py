@@ -101,7 +101,10 @@ def main():
         logger.info("初始化数据库...")
         db = DatabaseManager(config.database_path)
         logger.info("初始化人脸识别引擎...")
-        engine = FaceEngine(detection_model, recognition_model)
+        engine = FaceEngine(
+            detection_model, recognition_model,
+            detection_input_max_side=config.detection_input_max_side,
+        )
         logger.info(f"人脸识别引擎初始化成功 [后端: {engine.backend_name}]")
     except Exception as e:
         logger.critical(f"初始化失败: {e}", exc_info=True)

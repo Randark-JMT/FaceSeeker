@@ -156,7 +156,13 @@ class FaceEngine:
         top_k: int = 5000,
         backend_id: int | None = None,
         target_id: int | None = None,
+        detection_input_max_side: int = 0,
     ):
+        """
+        Args:
+            detection_input_max_side: 检测时输入图像最长边上限，0 表示不限制（使用原图尺寸）。
+                设为 640 或 1280 可在大图时缩小再检测，减轻 GPU 负载、提高吞吐；CUDA 下有助于提高利用率。
+        """
         self.logger = get_logger()
         
         if not os.path.exists(detection_model):
@@ -176,6 +182,7 @@ class FaceEngine:
         self._score_threshold = score_threshold
         self._nms_threshold = nms_threshold
         self._top_k = top_k
+        self._detection_input_max_side = max(0, detection_input_max_side)
 
         if backend_id is None:
             backend_id, target_id, self.backend_name = detect_backends()
@@ -203,6 +210,7 @@ class FaceEngine:
             self._detection_model, self._recognition_model,
             self._score_threshold, self._nms_threshold, self._top_k,
             self._backend_id, self._target_id,
+            self._detection_input_max_side,
         )
 
     def detect(self, image: np.ndarray, min_face_size: int | None = None) -> list[FaceData]:
@@ -234,13 +242,30 @@ class FaceEngine:
             if not image.flags['C_CONTIGUOUS']:
                 image = np.ascontiguousarray(image)
 
-            self.detector.setInputSize((w, h))
-            _, raw_faces = self.detector.detect(image)
+            # 可选：将大图缩放到最长边上限再检测，减轻 GPU 负载、提高吞吐（CUDA 下更易吃满）
+            scale = 1.0
+            detect_img = image
+            dw, dh = w, h
+            if self._detection_input_max_side > 0 and max(w, h) > self._detection_input_max_side:
+                scale = self._detection_input_max_side / max(w, h)
+                dw = int(round(w * scale))
+                dh = int(round(h * scale))
+                if dw < 1:
+                    dw = 1
+                if dh < 1:
+                    dh = 1
+                detect_img = cv2.resize(image, (dw, dh), interpolation=cv2.INTER_LINEAR)
+                if not detect_img.flags['C_CONTIGUOUS']:
+                    detect_img = np.ascontiguousarray(detect_img)
+
+            self.detector.setInputSize((dw, dh))
+            _, raw_faces = self.detector.detect(detect_img)
 
             if raw_faces is None or len(raw_faces) == 0:
                 return []
 
             min_sz = min_face_size if min_face_size is not None else self.MIN_FACE_SIZE
+            inv_scale = 1.0 / scale  # 将检测坐标还原到原图
 
             results = []
             for face_row in raw_faces:
@@ -249,10 +274,13 @@ class FaceEngine:
                     if not all(np.isfinite(face_row[:4])):
                         continue
                     
-                    bbox = tuple(map(int, face_row[:4]))
-                    fw, fh = bbox[2], bbox[3]
+                    # 若做了缩放检测，将 bbox/关键点还原到原图坐标
+                    x, y, fw, fh = face_row[0], face_row[1], face_row[2], face_row[3]
+                    if scale != 1.0:
+                        x, y, fw, fh = x * inv_scale, y * inv_scale, fw * inv_scale, fh * inv_scale
+                    bbox = tuple(map(int, (x, y, fw, fh)))
                     # 过滤过小的人脸（特征不可靠）
-                    if fw < min_sz or fh < min_sz:
+                    if bbox[2] < min_sz or bbox[3] < min_sz:
                         continue
 
                     # 验证关键点数值有效性
@@ -260,10 +288,16 @@ class FaceEngine:
                     if not all(np.isfinite(landmark_coords)):
                         continue
                     
-                    landmarks = [
-                        (int(face_row[4 + j * 2]), int(face_row[5 + j * 2]))
-                        for j in range(5)
-                    ]
+                    if scale != 1.0:
+                        landmarks = [
+                            (int(face_row[4 + j * 2] * inv_scale), int(face_row[5 + j * 2] * inv_scale))
+                            for j in range(5)
+                        ]
+                    else:
+                        landmarks = [
+                            (int(face_row[4 + j * 2]), int(face_row[5 + j * 2]))
+                            for j in range(5)
+                        ]
                     score = float(face_row[14])
                     results.append(FaceData(bbox=bbox, landmarks=landmarks, score=score))
                 except (ValueError, OverflowError) as e:

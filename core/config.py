@@ -69,6 +69,7 @@ class Config:
         # 数据目录（用户可配置）
         self._data_dir: Optional[str] = None
         self._data_dir_configured: bool = False
+        self._detection_input_max_side: int = 0
 
         self._load_config()
 
@@ -84,6 +85,8 @@ class Config:
                     data = json.load(f)
                     self._data_dir = data.get("data_dir") or None
                     self._data_dir_configured = data.get("data_dir_configured", False)
+                    # 检测输入最长边上限，0=不限制；640/1280 可提高 CUDA 吞吐与利用率
+                    self._detection_input_max_side = max(0, int(data.get("detection_input_max_side", 0)))
             except Exception as e:
                 print(f"警告：加载配置文件失败: {e}")
 
@@ -159,6 +162,11 @@ class Config:
     def log_path(self) -> str:
         """日志文件完整路径"""
         return os.path.join(self.data_dir, self.LOG_FILENAME)
+
+    @property
+    def detection_input_max_side(self) -> int:
+        """检测时输入图像最长边上限（0=不限制）。设为 640 或 1280 可提高 CUDA 利用率与吞吐。"""
+        return getattr(self, "_detection_input_max_side", 0)
 
     # ================================================
     # 资源文件路径
