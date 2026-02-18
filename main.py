@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""FaceSeeker - PySide6 可视化人脸识别系统"""
+"""FaceAtlas - PySide6 可视化人脸识别系统"""
 
 import sys
 import os
@@ -64,7 +64,7 @@ def main():
     # 初始化日志系统（必须在数据目录确定之后）
     logger = setup_logger(config.log_path)
     logger.info("=" * 60)
-    logger.info("FaceSeeker 启动")
+    logger.info("FaceAtlas 启动")
     logger.info(f"数据目录: {config.data_dir}")
     logger.info(f"数据库路径: {config.database_path}")
     logger.info(f"日志路径: {config.log_path}")
@@ -121,7 +121,7 @@ def main():
     logger.info("程序正在退出...")
     db.close()
     logger.info("数据库已关闭")
-    logger.info("FaceSeeker 已退出")
+    logger.info("FaceAtlas 已退出")
     sys.exit(ret)
 
 

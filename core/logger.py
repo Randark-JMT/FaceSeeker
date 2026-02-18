@@ -38,7 +38,7 @@ def setup_logger(log_file: str, log_level: int = logging.INFO) -> logging.Logger
         return _logger
     
     # 创建 logger
-    _logger = logging.getLogger("FaceSeeker")
+    _logger = logging.getLogger("FaceAtlas")
     _logger.setLevel(log_level)
     
     # 防止重复添加 handler
@@ -92,7 +92,7 @@ def get_logger() -> logging.Logger:
     """获取全局 logger 实例"""
     if _logger is None:
         # 如果未初始化，创建一个基础的 logger
-        return setup_logger("faceseeker.log")
+        return setup_logger("FaceAtlas.log")
     return _logger
 
 

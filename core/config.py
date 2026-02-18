@@ -13,13 +13,13 @@ from typing import Optional
 
 # ---- 常量 ----
 
-APP_NAME = "FaceSeeker"
+APP_NAME = "FaceAtlas"
 
 
 # ---- 辅助函数 ----
 
 def _get_appdata_base() -> str:
-    """获取 AppData 下的应用目录（Windows: %APPDATA%/FaceSeeker）"""
+    """获取 AppData 下的应用目录（Windows: %APPDATA%/FaceAtlas）"""
     if sys.platform == "win32":
         base = os.environ.get("APPDATA", os.path.expanduser("~"))
     else:
@@ -53,8 +53,8 @@ class Config:
     """
 
     # 数据文件名
-    DB_FILENAME = "faceseeker.db"
-    LOG_FILENAME = "faceseeker.log"
+    DB_FILENAME = "FaceAtlas.db"
+    LOG_FILENAME = "FaceAtlas.log"
 
     def __init__(self):
         # AppData 目录（固定）

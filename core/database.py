@@ -11,7 +11,7 @@ from core.logger import get_logger
 class DatabaseManager:
     """人脸识别系统数据库管理器"""
 
-    def __init__(self, db_path: str = "faceseeker.db"):
+    def __init__(self, db_path: str = "FaceAtlas.db"):
         self.db_path = db_path
         self.conn: Optional[sqlite3.Connection] = None
         self._auto_commit = True

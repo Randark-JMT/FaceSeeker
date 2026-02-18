@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""FaceSeeker Nuitka 构建脚本"""
+"""FaceAtlas Nuitka 构建脚本"""
 
 import subprocess
 import sys
@@ -9,7 +9,7 @@ def build():
     """使用 Nuitka 构建可执行文件"""
     
     print("=" * 60)
-    print("开始使用 Nuitka 编译 FaceSeeker")
+    print("开始使用 Nuitka 编译 FaceAtlas")
     print("=" * 60)
     
     # Nuitka 编译命令
@@ -20,7 +20,7 @@ def build():
         
         # 输出设置
         "--output-dir=build",
-        "--output-filename=FaceSeeker.exe",
+        "--output-filename=FaceAtlas.exe",
         
         # Windows 设置
         # "--windows-console-mode=attach",  # 附加到控制台（用于调试），可改为 disable
@@ -62,7 +62,7 @@ def build():
         result = subprocess.run(cmd, check=True)
         print("\n" + "=" * 60)
         print("编译成功！")
-        print("可执行文件位置: dist/FaceSeeker.exe")
+        print("可执行文件位置: dist/FaceAtlas.exe")
         print("=" * 60)
         return 0
     except subprocess.CalledProcessError as e:

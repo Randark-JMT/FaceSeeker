@@ -1,4 +1,4 @@
-faceseeker.db
+FaceAtlas.db
 **/__pycache__/
 dist/
 build/
@@ -6,4 +6,4 @@ build/
 .venv*/
 
 build/
-faceseeker.log
+FaceAtlas.log
