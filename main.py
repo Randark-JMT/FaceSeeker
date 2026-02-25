@@ -2,7 +2,6 @@
 """FaceAtlas - PySide6 可视化人脸识别系统"""
 
 import sys
-import os
 
 from PySide6.QtWidgets import QApplication, QMessageBox
 
@@ -70,29 +69,6 @@ def main():
     logger.info(f"数据库: {config.database_display}")
     logger.info(f"日志路径: {config.log_path}")
     logger.info("=" * 60)
-    # 获取模型文件路径（只读资源，从资源目录读取）
-    detection_model = config.get_resource_path(os.path.join("models", "face_detection_yunet_2023mar.onnx"))
-    recognition_model = config.get_resource_path(os.path.join("models", "face_recognition_sface_2021dec.onnx"))
-
-    # 检查模型文件
-    missing = []
-    if not os.path.exists(detection_model):
-        missing.append(f"检测模型: {detection_model}\n" "  下载地址: https://github.com/opencv/opencv_zoo/tree/master/models/face_detection_yunet")
-        logger.error(f"缺少检测模型: {detection_model}")
-    if not os.path.exists(recognition_model):
-        missing.append(
-            f"识别模型: {recognition_model}\n" "  下载地址: https://github.com/opencv/opencv_zoo/tree/master/models/face_recognition_sface"
-        )
-        logger.error(f"缺少识别模型: {recognition_model}")
-
-    if missing:
-        logger.critical("模型文件缺失，程序无法启动")
-        QMessageBox.critical(
-            None,
-            "缺少模型文件",
-            "请将以下模型文件放入 models/ 目录:\n\n" + "\n\n".join(missing),
-        )
-        sys.exit(1)
 
     # 初始化核心组件
     try:
@@ -104,10 +80,8 @@ def main():
             password=config.pg_password,
             database=config.pg_database,
         )
-        logger.info("初始化人脸识别引擎...")
+        logger.info("初始化人脸识别引擎（facenet-pytorch: MTCNN + InceptionResnetV1）...")
         engine = FaceEngine(
-            detection_model,
-            recognition_model,
             detection_input_max_side=config.detection_input_max_side,
         )
         logger.info(f"人脸识别引擎初始化成功 [后端: {engine.backend_name}]")
