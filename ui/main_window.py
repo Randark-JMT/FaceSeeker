@@ -391,9 +391,11 @@ class MainWindow(QMainWindow):
         self._person_panel.navigate_to_image.connect(self._navigate_to_image)
         bottom_splitter.addWidget(self._person_panel)
 
-        bottom_splitter.setStretchFactor(0, 1)
-        bottom_splitter.setStretchFactor(1, 1)
-        bottom_splitter.setStretchFactor(2, 2)
+        # 默认宽度：图片列表 500px，人脸列表与人物归类约 1:1（各 470px，总 1440）
+        bottom_splitter.setSizes([500, 470, 470])
+        bottom_splitter.setStretchFactor(0, 1)   # 图片列表不随窗口拉伸
+        bottom_splitter.setStretchFactor(1, 1)   # 人脸列表
+        bottom_splitter.setStretchFactor(2, 1)   # 人物归类（与人脸同比例）
 
         # 主分割器
         main_splitter = QSplitter(Qt.Orientation.Vertical)
