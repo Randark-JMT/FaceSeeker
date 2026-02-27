@@ -118,7 +118,7 @@ class FaceEngine:
 
     SUPPORTED_FORMATS = {".jpg", ".jpeg", ".png", ".bmp", ".tiff", ".webp"}
 
-    MIN_FACE_SIZE = 50
+    MIN_FACE_SIZE = 30
 
     def __init__(
         self,
