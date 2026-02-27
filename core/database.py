@@ -155,8 +155,6 @@ class DatabaseManager:
             dbname=self.database,
         )
         self.conn.autocommit = False
-        if register_vector is not None:
-            register_vector(self.conn)
 
     def _execute(self, query: str, params=None):
         with self._lock:
@@ -289,6 +287,12 @@ class DatabaseManager:
         except Exception as e:
             self.logger.warning("pgvector 扩展不可用，跳过向量索引迁移: %s", e)
             return
+        if register_vector is not None:
+            try:
+                register_vector(self.conn)
+            except psycopg2.ProgrammingError as e:
+                self.logger.warning("pgvector 类型注册失败: %s", e)
+                return
         self._pgvector_available = True
 
         if ("faces", "embedding") not in columns:
