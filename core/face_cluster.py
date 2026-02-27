@@ -96,41 +96,51 @@ class FaceCluster:
         # 先处理与已有人物的匹配（增量模式）
         assigned_to_existing: dict[int, list[int]] = defaultdict(list)  # person_id -> [face_id]
         unmatched_rows = []
-        
-        if incremental and person_features:
+
+        if incremental and (person_features or (self.db._pgvector_available and existing_persons)):
             _report(0, len(rows), "与已有人物匹配中...")
-            # 构建已有人物特征矩阵
-            person_ids_list = list(person_features.keys())
-            person_feat_matrix = np.vstack([person_features[pid] for pid in person_ids_list])
-            person_feat_matrix = person_feat_matrix.astype(np.float32)
-            norms = np.linalg.norm(person_feat_matrix, axis=1, keepdims=True)
-            norms = np.maximum(norms, 1e-10)
-            person_feat_matrix /= norms
-            
-            # 逐个人脸与已有人物比对
-            for i, row in enumerate(rows):
-                if (i + 1) % 10 == 0:
-                    _report(i + 1, len(rows), f"匹配进度: {i + 1}/{len(rows)}")
-                
-                feat = DatabaseManager.feature_from_blob(row["feature"])
-                feat = feat.flatten().astype(np.float32)
-                feat = feat / max(np.linalg.norm(feat), 1e-10)
-                
-                # 与所有已有人物比对
-                similarities = person_feat_matrix @ feat
-                max_sim = np.max(similarities)
-                
-                if max_sim >= cosine_threshold:
-                    # 匹配到已有人物
-                    best_person_idx = np.argmax(similarities)
-                    best_person_id = person_ids_list[best_person_idx]
-                    assigned_to_existing[best_person_id].append(row["id"])
-                else:
-                    # 未匹配，待后续聚类
-                    unmatched_rows.append(row)
-            
-            self.logger.info(f"匹配完成：{len(rows) - len(unmatched_rows)} 张人脸匹配到已有人物，"
-                           f"{len(unmatched_rows)} 张人脸需要新建归类")
+            if self.db._pgvector_available:
+                # 使用 pgvector K-NN 加速
+                for i, row in enumerate(rows):
+                    if (i + 1) % 10 == 0:
+                        _report(i + 1, len(rows), f"匹配进度: {i + 1}/{len(rows)}")
+                    feat = DatabaseManager.feature_from_blob(row["feature"])
+                    feat = feat.flatten().astype(np.float32)
+                    feat = feat / max(np.linalg.norm(feat), 1e-10)
+                    match = self.db.find_similar_person_for_face(feat, cosine_threshold)
+                    if match:
+                        person_id, _ = match
+                        assigned_to_existing[person_id].append(row["id"])
+                    else:
+                        unmatched_rows.append(row)
+            else:
+                # 回退：内存矩阵比对
+                person_ids_list = list(person_features.keys())
+                person_feat_matrix = np.vstack([person_features[pid] for pid in person_ids_list])
+                person_feat_matrix = person_feat_matrix.astype(np.float32)
+                norms = np.linalg.norm(person_feat_matrix, axis=1, keepdims=True)
+                norms = np.maximum(norms, 1e-10)
+                person_feat_matrix /= norms
+
+                for i, row in enumerate(rows):
+                    if (i + 1) % 10 == 0:
+                        _report(i + 1, len(rows), f"匹配进度: {i + 1}/{len(rows)}")
+                    feat = DatabaseManager.feature_from_blob(row["feature"])
+                    feat = feat.flatten().astype(np.float32)
+                    feat = feat / max(np.linalg.norm(feat), 1e-10)
+                    similarities = person_feat_matrix @ feat
+                    max_sim = np.max(similarities)
+                    if max_sim >= cosine_threshold:
+                        best_person_idx = np.argmax(similarities)
+                        best_person_id = person_ids_list[best_person_idx]
+                        assigned_to_existing[best_person_id].append(row["id"])
+                    else:
+                        unmatched_rows.append(row)
+
+            self.logger.info(
+                f"匹配完成：{len(rows) - len(unmatched_rows)} 张人脸匹配到已有人物，"
+                f"{len(unmatched_rows)} 张人脸需要新建归类"
+            )
         else:
             unmatched_rows = rows
 
