@@ -2,9 +2,24 @@
 
 import json
 import threading
-from typing import Optional
+from typing import Any, Optional
 
 import numpy as np
+
+
+def _to_native(obj: Any) -> Any:
+    """递归将 numpy 标量/数组转为 Python 原生类型，避免 psycopg2/JSON 兼容问题。"""
+    if isinstance(obj, (np.integer, np.int32, np.int64)):
+        return int(obj)
+    if isinstance(obj, (np.floating, np.float32, np.float64)):
+        return float(obj)
+    if isinstance(obj, np.ndarray):
+        return obj.tolist()
+    if isinstance(obj, (list, tuple)):
+        return [_to_native(x) for x in obj]
+    if isinstance(obj, dict):
+        return {k: _to_native(v) for k, v in obj.items()}
+    return obj
 import psycopg2
 from psycopg2 import sql
 from psycopg2.extras import RealDictCursor
@@ -341,7 +356,8 @@ class DatabaseManager:
         blur_score: float = 0.0,
     ) -> int:
         feature_blob = feature.tobytes() if feature is not None else None
-        landmarks_json = json.dumps(landmarks)
+        # 递归转为 Python 原生类型，避免 json.dumps 和 psycopg2 对 numpy 标量的兼容问题
+        landmarks_json = json.dumps(_to_native(landmarks))
         face_id = self._execute_returning_id(
             """
             INSERT INTO faces (image_id, bbox_x, bbox_y, bbox_w, bbox_h, landmarks, score, feature, person_id, blur_score)
@@ -349,16 +365,16 @@ class DatabaseManager:
             RETURNING id
             """,
             (
-                image_id,
-                bbox[0],
-                bbox[1],
-                bbox[2],
-                bbox[3],
+                int(image_id),
+                int(bbox[0]),
+                int(bbox[1]),
+                int(bbox[2]),
+                int(bbox[3]),
                 landmarks_json,
-                score,
+                float(score),
                 feature_blob,
                 person_id,
-                blur_score,
+                float(blur_score),
             ),
         )
         self._maybe_commit()
@@ -368,7 +384,7 @@ class DatabaseManager:
         ids = []
         for image_id, bbox, landmarks, score, feature, person_id in faces:
             feature_blob = feature.tobytes() if feature is not None else None
-            landmarks_json = json.dumps(landmarks)
+            landmarks_json = json.dumps(_to_native(landmarks))
             face_id = self._execute_returning_id(
                 """
                 INSERT INTO faces (image_id, bbox_x, bbox_y, bbox_w, bbox_h, landmarks, score, feature, person_id)
@@ -376,13 +392,13 @@ class DatabaseManager:
                 RETURNING id
                 """,
                 (
-                    image_id,
-                    bbox[0],
-                    bbox[1],
-                    bbox[2],
-                    bbox[3],
+                    int(image_id),
+                    int(bbox[0]),
+                    int(bbox[1]),
+                    int(bbox[2]),
+                    int(bbox[3]),
                     landmarks_json,
-                    score,
+                    float(score),
                     feature_blob,
                     person_id,
                 ),
