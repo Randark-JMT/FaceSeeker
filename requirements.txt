@@ -3,8 +3,6 @@ numpy
 torch
 facenet-pytorch
 pyside6
-pyinstaller
 rich
-nuitka
 zstandard
 psycopg2-binary
