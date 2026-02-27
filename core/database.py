@@ -784,6 +784,11 @@ class DatabaseManager:
             "SELECT * FROM labeled_persons WHERE feature IS NOT NULL ORDER BY id"
         )
 
+    def get_labeled_person_ids(self) -> set[str]:
+        """返回参考库中所有人物编号（用于人物归类面板的颜色区分）"""
+        rows = self._execute_fetchall("SELECT person_id FROM labeled_persons")
+        return {str(r["person_id"]) for r in rows}
+
     def clear_labeled_persons(self):
         """清空参考库。"""
         self._execute("DELETE FROM labeled_persons")

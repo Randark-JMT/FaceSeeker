@@ -150,6 +150,7 @@ class PersonGroup(QFrame):
 
     def __init__(self, person_id: int, name: str, face_rows: list,
                  total_face_count: int, thumb_cache: ThumbCache | None = None,
+                 is_from_reference: bool = False,
                  parent=None):
         super().__init__(parent)
         self.person_id = person_id
@@ -157,14 +158,23 @@ class PersonGroup(QFrame):
         self._total_face_count = total_face_count
         self._shown_count = min(MAX_THUMBS_PER_GROUP, len(face_rows))
         self._thumb_cache = thumb_cache
+        self._is_from_reference = is_from_reference
         # face_id -> ClickableThumb 映射，用于异步更新
         self._thumb_widgets: dict[int, ClickableThumb] = {}
 
         self.setFrameShape(QFrame.Shape.StyledPanel)
-        self.setStyleSheet(
-            "PersonGroup { background: #2a2a2a; border: 1px solid #444; "
-            "border-radius: 4px; margin: 2px; }"
-        )
+        if is_from_reference:
+            self.setStyleSheet(
+                "PersonGroup { background: #1a2e1a; border: 2px solid #2e7d32; "
+                "border-radius: 4px; margin: 2px; }"
+            )
+            self.setToolTip("参考库匹配成功")
+        else:
+            self.setStyleSheet(
+                "PersonGroup { background: #2e2a1a; border: 2px solid #b0a830; "
+                "border-radius: 4px; margin: 2px; }"
+            )
+            self.setToolTip("未在参考库中或未知人物")
 
         self._main_layout = QVBoxLayout(self)
         self._main_layout.setContentsMargins(8, 8, 8, 8)
@@ -173,13 +183,19 @@ class PersonGroup(QFrame):
         # 标题行
         header = QHBoxLayout()
         person_id_label = QLabel(f"P{person_id}")
-        person_id_label.setStyleSheet("font-weight: bold; color: #4a9eff; font-size: 10pt;")
+        person_id_label.setStyleSheet(
+            f"font-weight: bold; font-size: 10pt; color: {'#4caf50' if is_from_reference else '#f0c030'};"
+        )
         person_id_label.setFixedWidth(40)
         header.addWidget(person_id_label)
 
         self._name_edit = QLineEdit(name)
         self._name_edit.setFixedWidth(120)
-        self._name_edit.setStyleSheet("background: #3a3a3a; border: 1px solid #555; padding: 2px 4px;")
+        name_bg = "#2a3a2a" if is_from_reference else "#3a3a2a"
+        name_border = "#2e7d32" if is_from_reference else "#b0a830"
+        self._name_edit.setStyleSheet(
+            f"background: {name_bg}; border: 1px solid {name_border}; padding: 2px 4px;"
+        )
         self._name_edit.editingFinished.connect(self._on_name_changed)
         header.addWidget(self._name_edit)
         header.addWidget(QLabel(f"({total_face_count} 张人脸)"))
@@ -411,6 +427,7 @@ class PersonPanel(QWidget):
         if self._loaded_count >= len(self._all_persons):
             return
 
+        labeled_ids = self.db.get_labeled_person_ids()
         batch_end = min(self._loaded_count + LAZY_BATCH_SIZE, len(self._all_persons))
         all_requests = []  # 收集所有需要异步加载的缩略图请求
 
@@ -421,10 +438,13 @@ class PersonPanel(QWidget):
             if not face_rows:
                 continue
 
+            # 参考库匹配成功：persons.name 在 labeled_persons.person_id 中
+            is_from_ref = str(person.get("name", "")).strip() in labeled_ids
             total_count = person["face_count"]
             group = PersonGroup(
                 person["id"], person["name"], face_rows,
                 total_count, self._thumb_cache,
+                is_from_reference=is_from_ref,
             )
             group.name_changed.connect(self._on_name_changed)
             group.face_double_clicked.connect(self.navigate_to_image)
