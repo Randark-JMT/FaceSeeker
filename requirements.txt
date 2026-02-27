@@ -1,8 +1,12 @@
 opencv-python
 numpy
-torch
 facenet-pytorch
 pyside6
 rich
 zstandard
 psycopg2-binary
+
+# If need use CUDA to incrase calculating speed
+# Available CUDA Version: 
+# pip uninstall torch torchvision
+# install torch torchvision --index-url https://download.pytorch.org/whl/cu128
