@@ -220,10 +220,13 @@ class FaceEngine:
 
             for i in range(len(boxes)):
                 box = boxes[i]
+                # MTCNN 可能返回 Tensor，需转为 numpy 再使用 np.isfinite
+                box = np.asarray(box, dtype=np.float64)
                 prob = probs[i] if probs is not None else 1.0
-                if prob is None or not np.isfinite(prob):
+                prob = float(prob) if prob is not None else 1.0
+                if not np.isfinite(prob):
                     continue
-                if not all(np.isfinite(box)):
+                if not np.all(np.isfinite(box)):
                     continue
 
                 x1, y1, x2, y2 = box
