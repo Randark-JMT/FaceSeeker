@@ -58,6 +58,21 @@ class ClearDataDialog(QDialog):
 
         # 清空范围
         scope_group = QGroupBox("清空范围")
+        scope_group.setStyleSheet(
+            """
+            QRadioButton::indicator {
+                width: 14px;
+                height: 14px;
+                border-radius: 7px;
+                border: 2px solid #888;
+                background-color: transparent;
+            }
+            QRadioButton::indicator:checked {
+                background-color: white;
+                border: 2px solid white;
+            }
+            """
+        )
         scope_layout = QVBoxLayout(scope_group)
         self._radio_all = QRadioButton("全部 — 清空图片、人脸、人物、已标记库")
         self._radio_labeled = QRadioButton("已标记库 — 清空参考库（labeled_persons）")
