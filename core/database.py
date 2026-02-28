@@ -407,6 +407,24 @@ class DatabaseManager:
         )
         self._maybe_commit()
 
+    def get_table_stats(self) -> dict[str, int]:
+        """返回各表数据条目数量，用于清空数据对话框展示。"""
+        row = self._execute_fetchone(
+            """
+            SELECT
+                (SELECT COUNT(*) FROM images) AS images,
+                (SELECT COUNT(*) FROM faces) AS faces,
+                (SELECT COUNT(*) FROM persons) AS persons,
+                (SELECT COUNT(*) FROM labeled_persons) AS labeled_persons
+            """
+        )
+        return {
+            "images": int(row["images"]) if row else 0,
+            "faces": int(row["faces"]) if row else 0,
+            "persons": int(row["persons"]) if row else 0,
+            "labeled_persons": int(row["labeled_persons"]) if row else 0,
+        }
+
     def get_image_count(self) -> int:
         row = self._execute_fetchone("SELECT COUNT(*) AS cnt FROM images")
         return int(row["cnt"]) if row else 0

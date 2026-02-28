@@ -33,6 +33,7 @@ from core.thumb_cache import ThumbCache
 from ui.image_viewer import ImageViewer
 from ui.face_list_panel import FaceListPanel
 from ui.person_panel import PersonPanel
+from ui.clear_data_dialog import ClearDataDialog, SCOPE_ALL, SCOPE_LABELED, SCOPE_UNLABELED, SCOPE_CLUSTER, SCOPE_REF_MATCH
 
 
 SUPPORTED_FORMATS = "图片文件 (*.jpg *.jpeg *.png *.bmp *.tiff *.webp)"
@@ -270,9 +271,17 @@ class MainWindow(QMainWindow):
     # ---- 构建 UI ----
 
     def _build_toolbar(self):
+        # 按钮工具栏
         tb = QToolBar("工具栏")
         tb.setMovable(False)
         self.addToolBar(tb)
+
+        self.addToolBarBreak()
+
+        # 滑块工具栏
+        sb = QToolBar("滑块工具栏")
+        sb.setMovable(False)
+        self.addToolBar(sb)
 
         self._act_import_images = QAction("导入图片", self)
         self._act_import_images.triggered.connect(self._on_import_images)
@@ -333,17 +342,17 @@ class MainWindow(QMainWindow):
         # 聚类阈值滑块
         thresh_label = QLabel("聚类阈值:")
         thresh_label.setStyleSheet("padding: 0 4px;")
-        tb.addWidget(thresh_label)
+        sb.addWidget(thresh_label)
         self._thresh_slider = QSlider(Qt.Orientation.Horizontal)
         self._thresh_slider.setRange(50, 100)
         self._thresh_slider.setValue(80)
         self._thresh_slider.setFixedWidth(120)
         self._thresh_slider.setToolTip("调整人脸聚类的余弦相似度阈值\n值越高→分类越严格，人物组越多\n值越低→分类越宽松，更容易合并")
-        tb.addWidget(self._thresh_slider)
+        sb.addWidget(self._thresh_slider)
         self._thresh_value_label = QLabel("0.80")
         self._thresh_value_label.setFixedWidth(36)
         self._thresh_value_label.setStyleSheet("padding: 0 4px;")
-        tb.addWidget(self._thresh_value_label)
+        sb.addWidget(self._thresh_value_label)
         self._thresh_slider.valueChanged.connect(
             lambda v: self._thresh_value_label.setText(f"{v / 100:.2f}")
         )
@@ -353,7 +362,7 @@ class MainWindow(QMainWindow):
         # 模糊度阈值滑块
         blur_label = QLabel("清晰度阈值:")
         blur_label.setStyleSheet("padding: 0 4px;")
-        tb.addWidget(blur_label)
+        sb.addWidget(blur_label)
         self._blur_slider = QSlider(Qt.Orientation.Horizontal)
         self._blur_slider.setRange(0, 100)
         self._blur_slider.setValue(0)
@@ -365,11 +374,11 @@ class MainWindow(QMainWindow):
             "参考：< 15 严重模糊  |  15-40 模糊但可辨认  |  > 40 清晰\n"
             "算法：Laplacian + Tenengrad(Sobel) + FFT高频占比 加权融合"
         )
-        tb.addWidget(self._blur_slider)
+        sb.addWidget(self._blur_slider)
         self._blur_value_label = QLabel("关闭")
         self._blur_value_label.setFixedWidth(36)
         self._blur_value_label.setStyleSheet("padding: 0 4px;")
-        tb.addWidget(self._blur_value_label)
+        sb.addWidget(self._blur_value_label)
         self._blur_slider.valueChanged.connect(self._on_blur_slider_changed)
 
         tb.addSeparator()
@@ -377,17 +386,17 @@ class MainWindow(QMainWindow):
         # 参考库匹配阈值
         ref_label = QLabel("参考库阈值:")
         ref_label.setStyleSheet("padding: 0 4px;")
-        tb.addWidget(ref_label)
+        sb.addWidget(ref_label)
         self._ref_thresh_slider = QSlider(Qt.Orientation.Horizontal)
         self._ref_thresh_slider.setRange(50, 100)
         self._ref_thresh_slider.setValue(60)
         self._ref_thresh_slider.setFixedWidth(100)
         self._ref_thresh_slider.setToolTip("参考库匹配的余弦相似度阈值，高于此值则标记为该人物")
-        tb.addWidget(self._ref_thresh_slider)
+        sb.addWidget(self._ref_thresh_slider)
         self._ref_thresh_value_label = QLabel("0.60")
         self._ref_thresh_value_label.setFixedWidth(36)
         self._ref_thresh_value_label.setStyleSheet("padding: 0 4px;")
-        tb.addWidget(self._ref_thresh_value_label)
+        sb.addWidget(self._ref_thresh_value_label)
         self._ref_thresh_slider.valueChanged.connect(
             lambda v: self._ref_thresh_value_label.setText(f"{v / 100:.2f}")
         )
@@ -921,12 +930,18 @@ class MainWindow(QMainWindow):
     # ---- 清空/设置 ----
 
     def _on_clear_all(self):
-        ret = QMessageBox.question(
-            self, "确认", "确定要清空所有数据吗？此操作不可撤销。",
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-        )
-        if ret == QMessageBox.StandardButton.Yes:
-            self.logger.warning("用户执行清空所有数据操作")
+        dlg = ClearDataDialog(self.db, self)
+        if dlg.exec() != ClearDataDialog.DialogCode.Accepted:
+            return
+
+        scope = dlg.get_scope()
+        if not scope:
+            return
+
+        self.logger.warning("用户执行清空数据操作，范围: %s", scope)
+
+        if scope == SCOPE_ALL:
+            self.db.clear_labeled_persons()
             self.db.clear_all_persons()
             self.db.delete_all_images()
             self._thumb_cache.clear()
@@ -935,8 +950,32 @@ class MainWindow(QMainWindow):
             self._result_viewer.clear_image()
             self._face_panel.update_faces(None, [])
             self._person_panel.refresh()
-            self._statusbar.showMessage("数据已清空")
-            self.logger.info("数据清空完成")
+            self._statusbar.showMessage("全部数据已清空")
+        elif scope == SCOPE_LABELED:
+            self.db.clear_labeled_persons()
+            self._person_panel.refresh()
+            self._statusbar.showMessage("已标记库已清空")
+        elif scope == SCOPE_UNLABELED:
+            self.db.clear_all_persons(keep_named=True)
+            self._person_panel.refresh()
+            if self._current_image_id:
+                self._show_image(self._current_image_id)
+            self._statusbar.showMessage("未标记库已清空")
+        elif scope == SCOPE_CLUSTER:
+            self.db.clear_all_persons(keep_named=False)
+            self._person_panel.refresh()
+            if self._current_image_id:
+                self._show_image(self._current_image_id)
+            self._statusbar.showMessage("人脸归类结果已清空")
+        elif scope == SCOPE_REF_MATCH:
+            n = self.db.clear_reference_match_results()
+            self._person_panel.refresh()
+            if self._current_image_id:
+                self._show_image(self._current_image_id)
+            self._statusbar.showMessage(f"特征库匹配结果已清除，{n} 张人脸已解除关联")
+
+        self._update_statusbar_stats()
+        self.logger.info("数据清空完成: %s", scope)
 
     def _on_switch_database(self):
         from ui.pg_connect_dialog import PgConnectDialog
