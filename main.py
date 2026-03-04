@@ -54,6 +54,13 @@ def main():
         QScrollArea {
             border: none;
         }
+        QToolTip {
+            color: #ffffff;
+            background-color: #333;
+            border: 1px solid #555;
+            padding: 4px 6px;
+            font-size: 10pt;
+        }
     """
     )
 
