@@ -443,10 +443,20 @@ class DatabaseManager:
     def get_all_images(self) -> list:
         return self._execute_fetchall("SELECT * FROM images ORDER BY added_time DESC")
 
-    def get_images_paginated(self, offset: int, limit: int) -> list:
+    def get_images_paginated(self, offset: int, limit: int, search: str = "") -> list:
+        """
+        分页获取图片列表。search 为空时返回全部；否则按 file_path 模糊匹配（包含关键词的完整路径）。
+        """
+        search = (search or "").strip()
+        if not search:
+            return self._execute_fetchall(
+                "SELECT * FROM images ORDER BY added_time DESC LIMIT %s OFFSET %s",
+                (limit, offset),
+            )
+        pattern = f"%{search}%"
         return self._execute_fetchall(
-            "SELECT * FROM images ORDER BY added_time DESC LIMIT %s OFFSET %s",
-            (limit, offset),
+            "SELECT * FROM images WHERE file_path ILIKE %s ORDER BY added_time DESC LIMIT %s OFFSET %s",
+            (pattern, limit, offset),
         )
 
     def get_image(self, image_id: int):

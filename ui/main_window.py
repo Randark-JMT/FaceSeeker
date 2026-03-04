@@ -13,10 +13,10 @@ from concurrent.futures import ThreadPoolExecutor, wait, FIRST_COMPLETED
 from itertools import islice
 
 from PySide6.QtWidgets import (
-    QMainWindow, QWidget, QVBoxLayout, QSplitter,
+    QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QSplitter,
     QToolBar, QListWidget, QListWidgetItem, QMessageBox,
     QFileDialog, QProgressDialog, QStatusBar, QLabel, QSlider,
-    QApplication,
+    QLineEdit, QApplication,
 )
 from PySide6.QtCore import Qt, QThread, Signal, QTimer
 from PySide6.QtGui import QAction
@@ -261,6 +261,11 @@ class MainWindow(QMainWindow):
         self._current_image_id: int | None = None
         self._worker: QThread | None = None
 
+        # 图片列表搜索防抖
+        self._image_search_timer = QTimer(self)
+        self._image_search_timer.setSingleShot(True)
+        self._image_search_timer.timeout.connect(self._load_image_list)
+
         # 缩略图缓存
         self._thumb_cache = ThumbCache(config.thumb_cache_dir)
 
@@ -461,9 +466,24 @@ class MainWindow(QMainWindow):
         image_list_container = QWidget()
         il_layout = QVBoxLayout(image_list_container)
         il_layout.setContentsMargins(0, 0, 0, 0)
+        il_header = QHBoxLayout()
         il_label = QLabel("图片列表")
         il_label.setStyleSheet("font-weight: bold; font-size: 11pt; padding: 4px;")
-        il_layout.addWidget(il_label)
+        il_header.addWidget(il_label)
+        il_header.addSpacing(8)
+        search_label = QLabel("搜索:")
+        search_label.setStyleSheet("font-size: 9pt;")
+        il_header.addWidget(search_label)
+        self._image_search_edit = QLineEdit()
+        self._image_search_edit.setPlaceholderText("搜索未标记图片")
+        self._image_search_edit.setMinimumWidth(140)
+        self._image_search_edit.setStyleSheet(
+            "QLineEdit { background: #2a2a2a; border: 1px solid #555; padding: 4px 8px; }"
+        )
+        self._image_search_edit.textChanged.connect(self._on_image_search_changed)
+        il_header.addWidget(self._image_search_edit)
+        il_header.addStretch()
+        il_layout.addLayout(il_header)
         self._image_list = QListWidget()
         self._image_list.currentItemChanged.connect(self._on_image_selected)
         il_layout.addWidget(self._image_list)
@@ -504,10 +524,11 @@ class MainWindow(QMainWindow):
         """从数据库加载图片列表"""
         self._image_list.clear()
 
+        search_text = self._image_search_edit.text().strip() if hasattr(self, "_image_search_edit") else ""
         offset = 0
         total_loaded = 0
         while True:
-            rows = self.db.get_images_paginated(offset, IMAGE_LIST_PAGE_SIZE)
+            rows = self.db.get_images_paginated(offset, IMAGE_LIST_PAGE_SIZE, search_text)
             if not rows:
                 break
             for row in rows:
@@ -609,6 +630,11 @@ class MainWindow(QMainWindow):
 
     def _on_blur_slider_changed(self, value: int):
         self._blur_value_label.setText("关闭" if value == 0 else str(value))
+
+    def _on_image_search_changed(self):
+        """图片列表搜索框变化时防抖刷新"""
+        self._image_search_timer.stop()
+        self._image_search_timer.start(300)
 
     def _on_image_selected(self, current: QListWidgetItem, _previous=None):
         if current is None:
