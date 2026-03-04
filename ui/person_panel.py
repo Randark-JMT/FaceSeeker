@@ -159,11 +159,12 @@ class PersonGroup(QFrame):
                  parent=None):
         super().__init__(parent)
         self.person_id = person_id
-        self.face_rows = face_rows
-        self._total_face_count = total_face_count
-        self._shown_count = min(MAX_THUMBS_PER_GROUP, len(face_rows))
+        self.face_rows = list(face_rows)
         self._thumb_cache = thumb_cache
         self._is_from_reference = is_from_reference
+        self._sort_face_rows_by_match()
+        self._total_face_count = total_face_count
+        self._shown_count = min(MAX_THUMBS_PER_GROUP, len(self.face_rows))
         # face_id -> ClickableThumb 映射，用于异步更新
         self._thumb_widgets: dict[int, ClickableThumb] = {}
 
@@ -310,9 +311,21 @@ class PersonGroup(QFrame):
             requests.append((face_id, row["file_path"], bbox))
         return requests
 
+    def _sort_face_rows_by_match(self):
+        """按匹配度从高到低排序：参考库匹配用 ref_match_similarity，人脸归类用 cluster_similarity"""
+        def key(row):
+            if self._is_from_reference:
+                s = row.get("ref_match_similarity")
+            else:
+                s = row.get("cluster_similarity")
+            return -(s if s is not None else -1.0)
+
+        self.face_rows.sort(key=key)
+
     def append_face_rows(self, rows: list):
         """外部补充人脸数据（PersonPanel 从 DB 拉取后调用）"""
         self.face_rows.extend(rows)
+        self._sort_face_rows_by_match()
         self._build_thumbs()
         self._request_async_load()
 
