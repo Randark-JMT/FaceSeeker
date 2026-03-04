@@ -246,7 +246,9 @@ class DatabaseManager:
                 score DOUBLE PRECISION,
                 feature BYTEA,
                 person_id BIGINT REFERENCES persons(id) ON DELETE SET NULL,
-                blur_score DOUBLE PRECISION DEFAULT 0
+                blur_score DOUBLE PRECISION DEFAULT 0,
+                ref_match_similarity DOUBLE PRECISION,
+                cluster_similarity DOUBLE PRECISION
             )
             """
         )
