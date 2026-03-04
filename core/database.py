@@ -755,6 +755,8 @@ class DatabaseManager:
         )
 
     def get_faces_by_person(self, person_id: int, limit: int = 0) -> list:
+        # 按匹配度从高到低排序，便于 UI 默认显示“匹配度最高的 N 张”
+        order_expr = "COALESCE(f.ref_match_similarity, f.cluster_similarity) DESC NULLS LAST, f.id"
         if limit > 0:
             return self._execute_fetchall(
                 """
@@ -762,7 +764,7 @@ class DatabaseManager:
                 FROM faces f
                 JOIN images i ON f.image_id = i.id
                 WHERE f.person_id = %s
-                ORDER BY f.id
+                ORDER BY """ + order_expr + """
                 LIMIT %s
                 """,
                 (person_id, limit),
@@ -773,7 +775,7 @@ class DatabaseManager:
             FROM faces f
             JOIN images i ON f.image_id = i.id
             WHERE f.person_id = %s
-            ORDER BY f.id
+            ORDER BY """ + order_expr + """
             """,
             (person_id,),
         )
