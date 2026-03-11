@@ -141,6 +141,7 @@ class ReferenceSearchDialog(QDialog):
             sim_label = QLabel(f"{person_id}\n相似度: {sim:.2%}")
             sim_label.setStyleSheet("font-size: 9pt; color: #ccc;")
             sim_label.setWordWrap(True)
+            sim_label.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
             cell = QWidget()
             cell_layout = QVBoxLayout(cell)
             cell_layout.setContentsMargins(0, 0, 0, 0)
