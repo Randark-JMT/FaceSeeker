@@ -8,7 +8,6 @@ from PySide6.QtWidgets import QApplication, QMessageBox
 from core.config import get_config
 from core.logger import setup_logger, get_logger, console
 from core.database import DatabaseManager
-from core.face_engine import FaceEngine
 from ui import APP_NAME, APP_VERSION
 from ui.main_window import MainWindow
 from ui.pg_connect_dialog import show_pg_connect_dialog
@@ -87,11 +86,8 @@ def main():
             password=config.pg_password,
             database=config.pg_database,
         )
-        logger.info("初始化人脸识别引擎（facenet-pytorch: MTCNN + InceptionResnetV1）...")
-        engine = FaceEngine(
-            detection_input_max_side=config.detection_input_max_side,
-        )
-        logger.info(f"人脸识别引擎初始化成功 [后端: {engine.backend_name}]")
+        # 人脸识别引擎改为延迟加载，首次使用时再初始化以加快启动
+        logger.info("人脸识别引擎将延迟加载（首次识别或查看图片时初始化）")
     except Exception as e:
         logger.critical(f"初始化失败: {e}", exc_info=True)
         QMessageBox.critical(
@@ -101,9 +97,9 @@ def main():
         )
         sys.exit(1)
 
-    window = MainWindow(engine, db, config)
+    window = MainWindow(db, config)
     window.setWindowTitle(
-        f"{APP_NAME} - {APP_VERSION}  [后端: {engine.backend_name}]  [{config.pg_database}]"
+        f"{APP_NAME} - {APP_VERSION}  [{config.pg_database}]"
     )
     window.show()
 

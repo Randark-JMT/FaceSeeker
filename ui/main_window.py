@@ -247,13 +247,37 @@ class ClusterWorker(QThread):
         self.finished_cluster.emit(result)
 
 
+class LoadImageListWorker(QThread):
+    """后台分页加载图片列表，按批发射到主线程，避免阻塞 UI。"""
+    batch = Signal(list)   # 一批 rows
+    finished_load = Signal()
+
+    def __init__(self, db: DatabaseManager, search_text: str, page_size: int = 500):
+        super().__init__()
+        self.db = db
+        self.search_text = (search_text or "").strip()
+        self.page_size = page_size
+
+    def run(self):
+        offset = 0
+        while True:
+            rows = self.db.get_images_paginated(offset, self.page_size, self.search_text)
+            if not rows:
+                break
+            self.batch.emit(rows)
+            offset += len(rows)
+            if len(rows) < self.page_size:
+                break
+        self.finished_load.emit()
+
+
 # ---- 主窗口 ----
 
 class MainWindow(QMainWindow):
 
-    def __init__(self, engine: FaceEngine, db: DatabaseManager, config: Config):
+    def __init__(self, db: DatabaseManager, config: Config, engine: FaceEngine | None = None):
         super().__init__()
-        self.engine = engine
+        self._engine = engine  # None 表示延迟加载，首次使用时再创建
         self.db = db
         self.config = config
         self.cluster_engine = FaceCluster(db)
@@ -261,6 +285,7 @@ class MainWindow(QMainWindow):
 
         self._current_image_id: int | None = None
         self._worker: QThread | None = None
+        self._image_list_worker: LoadImageListWorker | None = None
 
         # 图片列表搜索防抖
         self._image_search_timer = QTimer(self)
@@ -281,6 +306,21 @@ class MainWindow(QMainWindow):
         QTimer.singleShot(0, self._load_image_list)
 
         self.logger.info("主窗口初始化完成")
+
+    def _ensure_engine(self) -> FaceEngine:
+        """延迟初始化人脸识别引擎，首次需要时再加载以加快启动。"""
+        if self._engine is None:
+            self._statusbar.showMessage("正在加载人脸识别引擎...")
+            QApplication.processEvents()
+            self._engine = FaceEngine(
+                detection_input_max_side=self.config.detection_input_max_side,
+            )
+            self.logger.info(f"人脸识别引擎已就绪 [后端: {self._engine.backend_name}]")
+            self.setWindowTitle(
+                f"{APP_NAME} - {APP_VERSION}  [后端: {self._engine.backend_name}]  [{self.config.pg_database}]"
+            )
+            self._update_statusbar_stats()
+        return self._engine
 
     # ---- 构建 UI ----
 
@@ -524,49 +564,45 @@ class MainWindow(QMainWindow):
     # ---- 数据加载 ----
 
     def _load_image_list(self):
-        """从数据库加载图片列表"""
+        """从数据库加载图片列表（后台线程分页拉取，主线程按批追加，避免卡顿）"""
         self._image_list.clear()
+        if self._image_list_worker and self._image_list_worker.isRunning():
+            self._image_list_worker.quit()
+            self._image_list_worker.wait(300)
 
         search_text = self._image_search_edit.text().strip() if hasattr(self, "_image_search_edit") else ""
-        offset = 0
-        total_loaded = 0
-        while True:
-            rows = self.db.get_images_paginated(offset, IMAGE_LIST_PAGE_SIZE, search_text)
-            if not rows:
-                break
-            for row in rows:
-                display_name = row['filename']
-                if row['relative_path']:
-                    display_name = f"{row['relative_path']}/{row['filename']}"
+        worker = LoadImageListWorker(self.db, search_text, IMAGE_LIST_PAGE_SIZE)
+        worker.batch.connect(self._on_image_list_batch)
+        worker.finished_load.connect(self._on_image_list_loaded)
+        worker.finished.connect(worker.deleteLater)
+        self._image_list_worker = worker
+        worker.start()
 
-                # ★ 区分已分析/未分析状态
-                if row['analyzed']:
-                    label = f"{display_name}  [{row['face_count']} 人脸]"
-                else:
-                    label = f"{display_name}  [未识别]"
+    def _on_image_list_batch(self, rows: list):
+        """主线程：追加一批图片项到列表"""
+        for row in rows:
+            display_name = row["filename"]
+            if row["relative_path"]:
+                display_name = f"{row['relative_path']}/{row['filename']}"
+            if row["analyzed"]:
+                label = f"{display_name}  [{row['face_count']} 人脸]"
+            else:
+                label = f"{display_name}  [未识别]"
+            item = QListWidgetItem(label)
+            item.setData(Qt.ItemDataRole.UserRole, row["id"])
+            if not row["analyzed"]:
+                item.setForeground(Qt.GlobalColor.darkYellow)
+            self._image_list.addItem(item)
+        QApplication.processEvents()
 
-                item = QListWidgetItem(label)
-                item.setData(Qt.ItemDataRole.UserRole, row["id"])
-                # 未分析的项用不同颜色
-                if not row['analyzed']:
-                    item.setForeground(Qt.GlobalColor.darkYellow)
-                self._image_list.addItem(item)
-
-            total_loaded += len(rows)
-            offset += IMAGE_LIST_PAGE_SIZE
-            if total_loaded % 2000 == 0:
-                QApplication.processEvents()
-
-        # 加载人物归类
+    def _on_image_list_loaded(self):
+        """图片列表加载完成：刷新人物面板与状态栏"""
         self._person_panel.refresh()
-
-        # ★ 状态栏显示统计
         self._update_statusbar_stats()
 
     def _update_statusbar_stats(self):
-        """更新状态栏的统计信息"""
-        total = self.db.get_image_count()
-        analyzed = self.db.get_analyzed_count()
+        """更新状态栏的统计信息（单次查询）"""
+        total, analyzed, face_count = self.db.get_statusbar_stats()
         unanalyzed = total - analyzed
         if total == 0:
             self._statusbar.showMessage("就绪 - 请导入图片")
@@ -575,7 +611,6 @@ class MainWindow(QMainWindow):
                 f"共 {total} 张图片 | 已识别 {analyzed} 张 | 待识别 {unanalyzed} 张"
             )
         else:
-            face_count = self.db.get_face_count()
             self._statusbar.showMessage(
                 f"共 {total} 张图片 | 全部已识别 | {face_count} 张人脸"
             )
@@ -615,7 +650,7 @@ class MainWindow(QMainWindow):
                 ))
                 person_ids.append(fd["person_id"])
 
-            annotated = self.engine.visualize(cv_img, face_datas, person_ids)
+            annotated = self._ensure_engine().visualize(cv_img, face_datas, person_ids)
             self._result_viewer.set_image(annotated)
         else:
             self._result_viewer.set_image(cv_img)
@@ -748,7 +783,7 @@ class MainWindow(QMainWindow):
         blur_threshold = self._blur_slider.value()
         detect_conf_threshold = self._detect_conf_slider.value() / 100.0
         worker = DetectWorker(
-            self.engine, self.db, items,
+            self._ensure_engine(), self.db, items,
             thumb_cache=self._thumb_cache,
             blur_threshold=float(blur_threshold),
             detect_conf_threshold=detect_conf_threshold,
@@ -803,7 +838,7 @@ class MainWindow(QMainWindow):
 
         # 人脸检测
         h, w = cv_img.shape[:2]
-        faces = self.engine.detect(cv_img)
+        faces = self._ensure_engine().detect(cv_img)
 
         # 人脸检测置信度过滤（浮点容差 1e-6，避免 0.9999 被 1.0 阈值误判）
         detect_conf_threshold = self._detect_conf_slider.value() / 100.0
@@ -824,7 +859,7 @@ class MainWindow(QMainWindow):
             discarded = before_count - len(faces)
 
         # 特征提取（仅对通过模糊度过滤的人脸）
-        self.engine.extract_features(cv_img, faces)
+        self._ensure_engine().extract_features(cv_img, faces)
 
         # 保存到数据库
         for face in faces:
@@ -935,7 +970,7 @@ class MainWindow(QMainWindow):
         self._ref_progress.setMinimumDuration(0)
         self._ref_progress.setValue(0)
 
-        worker = LabeledImportWorker(self.engine, self.db, folder)
+        worker = LabeledImportWorker(self._ensure_engine(), self.db, folder)
         worker.progress.connect(self._on_ref_import_progress)
         worker.finished_all.connect(self._on_ref_import_done)
         worker.error.connect(lambda msg: self.logger.warning(f"参考库导入: {msg}"))

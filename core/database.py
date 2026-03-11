@@ -12,9 +12,29 @@ try:
     from pgvector.psycopg2 import register_vector
 except ImportError:
     register_vector = None
-from psycopg2.extras import RealDictCursor
+from psycopg2.extras import RealDictCursor, execute_batch
 
 from core.logger import get_logger
+
+
+def _backfill_embedding_batch(db: "DatabaseManager", table: str, rows: list, row_to_vector):
+    """批量回填 embedding 列，减少 round-trip（每批最多 100 条，execute_batch 发送）。"""
+    if not rows:
+        return
+    BATCH = 100
+    update_sql = f"UPDATE {table} SET embedding = %s WHERE id = %s"
+    with db._lock:
+        with db.conn.cursor() as cur:
+            if register_vector is not None:
+                try:
+                    register_vector(db.conn)
+                except Exception:
+                    pass
+            for i in range(0, len(rows), BATCH):
+                chunk = rows[i : i + BATCH]
+                params = [(row_to_vector(r), r["id"]) for r in chunk]
+                execute_batch(cur, update_sql, params, page_size=BATCH)
+        db.conn.commit()
 
 
 def _to_native(obj: Any) -> Any:
@@ -191,6 +211,17 @@ class DatabaseManager:
                 self.conn.commit()
 
     def _init_db(self):
+        # 已有 schema 时跳过建表/索引，减少启动时大量 round-trip（约 20+ 次）
+        try:
+            row = self._execute_fetchone("SELECT schema_version FROM faceatlas_meta WHERE id = 1")
+            if row is not None and int(row.get("schema_version", 0)) >= 1:
+                self.logger.info("数据库 schema 已存在，跳过建表与索引")
+                with self._lock:
+                    self.conn.commit()
+                return
+        except Exception:
+            pass  # 表不存在则继续完整初始化
+
         self._execute(
             """
             CREATE TABLE IF NOT EXISTS faceatlas_meta (
@@ -323,15 +354,16 @@ class DatabaseManager:
             self.logger.info("数据库迁移：添加 persons.embedding 列")
             self._execute("ALTER TABLE persons ADD COLUMN embedding vector(512)")
 
-        # 回填 faces：从 feature BYTEA 填充 embedding
+        # 回填 faces：从 feature BYTEA 填充 embedding（批量 UPDATE 减少 round-trip）
         rows = self._execute_fetchall(
             "SELECT id, feature FROM faces WHERE feature IS NOT NULL AND embedding IS NULL"
         )
         if rows:
             self.logger.info("回填 faces.embedding: %d 条", len(rows))
-            for row in rows:
-                arr = self.feature_from_blob(row["feature"]).flatten().astype(np.float32)
-                self._execute("UPDATE faces SET embedding = %s WHERE id = %s", (arr, row["id"]))
+            _backfill_embedding_batch(
+                self, "faces", rows,
+                lambda r: self.feature_from_blob(r["feature"]).flatten().astype(np.float32),
+            )
 
         # 回填 persons
         rows = self._execute_fetchall(
@@ -339,9 +371,10 @@ class DatabaseManager:
         )
         if rows:
             self.logger.info("回填 persons.embedding: %d 条", len(rows))
-            for row in rows:
-                arr = self.feature_from_blob(row["feature"]).flatten().astype(np.float32)
-                self._execute("UPDATE persons SET embedding = %s WHERE id = %s", (arr, row["id"]))
+            _backfill_embedding_batch(
+                self, "persons", rows,
+                lambda r: self.feature_from_blob(r["feature"]).flatten().astype(np.float32),
+            )
 
         # 创建 HNSW 索引（若不存在）
         idx_rows = self._execute_fetchall(
@@ -600,6 +633,24 @@ class DatabaseManager:
     def get_face_count(self) -> int:
         row = self._execute_fetchone("SELECT COUNT(*) AS cnt FROM faces WHERE feature IS NOT NULL")
         return int(row["cnt"]) if row else 0
+
+    def get_statusbar_stats(self) -> tuple[int, int, int]:
+        """一次查询返回 (图片总数, 已识别数, 人脸数)，用于启动时状态栏，减少 round-trip。"""
+        row = self._execute_fetchone(
+            """
+            SELECT
+                (SELECT COUNT(*) FROM images) AS total,
+                (SELECT COUNT(*) FROM images WHERE analyzed = 1) AS analyzed,
+                (SELECT COUNT(*) FROM faces WHERE feature IS NOT NULL) AS faces
+            """
+        )
+        if not row:
+            return 0, 0, 0
+        return (
+            int(row["total"]),
+            int(row["analyzed"]),
+            int(row["faces"]),
+        )
 
     def get_all_faces_with_features(self) -> list:
         return self._execute_fetchall("SELECT * FROM faces WHERE feature IS NOT NULL")
