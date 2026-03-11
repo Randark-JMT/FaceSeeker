@@ -661,6 +661,18 @@ class DatabaseManager:
     def get_face(self, face_id: int):
         return self._execute_fetchone("SELECT * FROM faces WHERE id = %s", (face_id,))
 
+    def get_face_with_file_path(self, face_id: int):
+        """返回单张人脸行并关联图片路径，用于展示或裁剪。若无则返回 None。"""
+        return self._execute_fetchone(
+            """
+            SELECT f.*, i.file_path, i.filename
+            FROM faces f
+            JOIN images i ON f.image_id = i.id
+            WHERE f.id = %s
+            """,
+            (face_id,),
+        )
+
     @staticmethod
     def feature_from_blob(blob: bytes) -> np.ndarray:
         return np.frombuffer(blob, dtype=np.float32).copy()

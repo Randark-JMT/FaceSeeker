@@ -107,9 +107,10 @@ class FlowLayout(QLayout):
 # ---- 可点击的缩略图和标签 ----
 
 class ClickableThumb(QLabel):
-    """可双击的人脸缩略图"""
+    """可双击的人脸缩略图，右键菜单提供「在参考库中进行检索」"""
 
     double_clicked = Signal(int)  # image_id
+    search_in_reference_requested = Signal(int)  # face_id
 
     def __init__(self, image_id: int, face_id: int = 0, parent=None):
         super().__init__(parent)
@@ -119,6 +120,11 @@ class ClickableThumb(QLabel):
 
     def mouseDoubleClickEvent(self, event):
         self.double_clicked.emit(self._image_id)
+
+    def contextMenuEvent(self, event):
+        menu = QMenu(self)
+        menu.addAction("在参考库中进行检索", lambda: self.search_in_reference_requested.emit(self.face_id))
+        menu.exec(event.globalPos())
 
 
 class ClickableMoreLabel(QLabel):
@@ -152,6 +158,7 @@ class PersonGroup(QFrame):
     name_changed = Signal(int, str)   # person_id, new_name
     face_double_clicked = Signal(int) # image_id
     need_more_faces = Signal(int, int)  # person_id, min_count（需保证 face_rows 至少有这么多条）
+    search_in_reference_requested = Signal(int)  # face_id
 
     def __init__(self, person_id: int, name: str, face_rows: list,
                  total_face_count: int, thumb_cache: ThumbCache | None = None,
@@ -218,7 +225,7 @@ class PersonGroup(QFrame):
 
     def _face_thumb_tooltip(self, row: dict) -> str:
         """根据人脸行数据生成缩略图悬停提示（含识别/相似度信息）。"""
-        parts = [f"来源: {row.get('filename', '')}", "双击跳转"]
+        parts = [f"来源: {row.get('filename', '')}", "双击跳转", "右键：在参考库中检索"]
         score = row.get("score")
         if score is not None:
             parts.insert(1, f"检测置信度: {float(score):.0%}")
@@ -263,6 +270,7 @@ class PersonGroup(QFrame):
                 self._load_thumb_sync(thumb, row)
 
             thumb.double_clicked.connect(self.face_double_clicked)
+            thumb.search_in_reference_requested.connect(self._emit_search_in_reference)
             self.thumb_flow.addWidget(thumb)
             self._thumb_widgets[face_id] = thumb
 
@@ -359,6 +367,10 @@ class PersonGroup(QFrame):
         menu.addAction("一次性显示剩下的图片", self._on_show_all_remaining)
         menu.exec(global_pos)
 
+    def _emit_search_in_reference(self, face_id: int):
+        """转发缩略图「在参考库中检索」请求"""
+        self.search_in_reference_requested.emit(face_id)
+
     def _request_async_load(self):
         """请求异步加载未缓存的缩略图（由 PersonPanel 协调）"""
         # 通过查找父级 PersonPanel 来触发异步加载
@@ -390,6 +402,7 @@ class PersonPanel(QWidget):
     """人物归类面板（支持懒加载 + 异步缩略图）"""
 
     navigate_to_image = Signal(int)  # image_id — 外部连接此信号实现跳转
+    search_in_reference_requested = Signal(int)  # face_id — 在参考库中检索该人脸
 
     def __init__(self, db: DatabaseManager, thumb_cache: ThumbCache | None = None, parent=None):
         super().__init__(parent)
@@ -535,6 +548,7 @@ class PersonPanel(QWidget):
             )
             group.name_changed.connect(self._on_name_changed)
             group.face_double_clicked.connect(self.navigate_to_image)
+            group.search_in_reference_requested.connect(self._on_search_in_reference)
             group.need_more_faces.connect(self._on_need_more_faces)
             self._container_layout.addWidget(group)
             self._person_groups.append(group)
@@ -613,6 +627,10 @@ class PersonPanel(QWidget):
         new_rows = all_rows[current_len:]
         if new_rows:
             group.append_face_rows(new_rows)
+
+    def _on_search_in_reference(self, face_id: int):
+        """人脸缩略图右键「在参考库中检索」时，由主窗口打开检索对话框"""
+        self.search_in_reference_requested.emit(face_id)
 
     # ---- 排序与事件 ----
 
