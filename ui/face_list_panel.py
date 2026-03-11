@@ -7,6 +7,7 @@ import cv2
 import numpy as np
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QScrollArea, QFrame,
+    QMenu,
 )
 from PySide6.QtGui import QImage, QPixmap
 from PySide6.QtCore import Qt, Signal
@@ -16,16 +17,23 @@ from core.thumb_cache import ThumbCache
 
 
 class FaceCard(QFrame):
-    """单个人脸卡片"""
+    """单个人脸卡片，右键菜单可「在参考库中进行检索」"""
+
+    search_in_reference_requested = Signal(int)  # face_id
 
     def __init__(self, pix: QPixmap, index: int, score: float,
                  person_id: int | None = None, blur_score: float = 0.0,
+                 face_id: int | None = None,
                  parent=None):
         super().__init__(parent)
+        self._face_id = face_id
         self.setFrameShape(QFrame.Shape.StyledPanel)
         self.setStyleSheet(
             "FaceCard { background: #2d2d2d; border: 1px solid #444; border-radius: 4px; }"
         )
+        self.setCursor(Qt.CursorShape.PointingHandCursor)
+        if face_id is not None:
+            self.setToolTip("右键：在参考库中检索")
 
         layout = QHBoxLayout(self)
         layout.setContentsMargins(6, 6, 6, 6)
@@ -58,6 +66,16 @@ class FaceCard(QFrame):
         layout.addLayout(info_layout)
         layout.addStretch()
 
+    def contextMenuEvent(self, event):
+        if self._face_id is None:
+            return
+        menu = QMenu(self)
+        menu.addAction(
+            "在参考库中进行检索",
+            lambda: self.search_in_reference_requested.emit(self._face_id),
+        )
+        menu.exec(event.globalPos())
+
 
 def _cv_to_pixmap(cv_img: np.ndarray, w: int, h: int) -> QPixmap:
     rgb = cv2.cvtColor(cv_img, cv2.COLOR_BGR2RGB)
@@ -74,6 +92,7 @@ class FaceListPanel(QWidget):
     """显示当前选中图片的所有人脸"""
 
     face_selected = Signal(int)  # 发射人脸索引
+    search_in_reference_requested = Signal(int)  # face_id — 在参考库中检索该人脸
 
     def __init__(self, thumb_cache: ThumbCache | None = None, parent=None):
         super().__init__(parent)
@@ -133,5 +152,7 @@ class FaceListPanel(QWidget):
                 pix = _cv_to_pixmap(thumb, 64, 64)
 
             card = FaceCard(pix, idx, fd["score"], fd.get("person_id"),
-                           blur_score=fd.get("blur_score", 0.0))
+                           blur_score=fd.get("blur_score", 0.0),
+                           face_id=face_id)
+            card.search_in_reference_requested.connect(self.search_in_reference_requested)
             self._container_layout.addWidget(card)

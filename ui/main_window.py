@@ -34,6 +34,7 @@ from ui.image_viewer import ImageViewer
 from ui.face_list_panel import FaceListPanel
 from ui.person_panel import PersonPanel
 from ui.clear_data_dialog import ClearDataDialog, SCOPE_ALL, SCOPE_LABELED, SCOPE_UNLABELED, SCOPE_CLUSTER, SCOPE_REF_MATCH
+from ui.reference_search_dialog import ReferenceSearchDialog
 
 
 SUPPORTED_FORMATS = "图片文件 (*.jpg *.jpeg *.png *.bmp *.tiff *.webp)"
@@ -491,11 +492,13 @@ class MainWindow(QMainWindow):
 
         # 人脸列表
         self._face_panel = FaceListPanel(thumb_cache=self._thumb_cache)
+        self._face_panel.search_in_reference_requested.connect(self._on_search_in_reference)
         bottom_splitter.addWidget(self._face_panel)
 
         # 人物归类
         self._person_panel = PersonPanel(self.db, thumb_cache=self._thumb_cache)
         self._person_panel.navigate_to_image.connect(self._navigate_to_image)
+        self._person_panel.search_in_reference_requested.connect(self._on_search_in_reference)
         bottom_splitter.addWidget(self._person_panel)
 
         # 默认宽度：图片列表 500px，人脸列表与人物归类约 1:1（各 470px，总 1440）
@@ -625,6 +628,11 @@ class MainWindow(QMainWindow):
             if item.data(Qt.ItemDataRole.UserRole) == image_id:
                 self._image_list.setCurrentItem(item)
                 return
+
+    def _on_search_in_reference(self, face_id: int):
+        """打开参考库检索对话框：展示该人脸与参考库中相似度 Top 20"""
+        dlg = ReferenceSearchDialog(self.db, face_id, self)
+        dlg.show()
 
     # ---- 工具栏回调 ----
 

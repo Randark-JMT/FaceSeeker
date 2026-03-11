@@ -10,6 +10,41 @@ from core.logger import get_logger
 FACE_CHUNK_SIZE = 10000
 
 
+def search_reference_top_k(db: DatabaseManager, face_id: int, top_k: int = 20) -> list[tuple[dict, float]]:
+    """
+    对单张人脸在参考库中检索相似度最高的 top_k 条，按相似度从高到低返回。
+    返回: [(ref_row_dict, similarity), ...]，ref_row_dict 为 labeled_persons 行（含 person_id, folder_path, feature 等）。
+    若该人脸无特征或参考库为空，返回空列表。
+    """
+    face_row = db.get_face(face_id)
+    if not face_row or not face_row.get("feature"):
+        return []
+    refs = db.get_labeled_persons_with_features()
+    if not refs:
+        return []
+
+    face_vec = DatabaseManager.feature_from_blob(face_row["feature"]).flatten().astype(np.float32)
+    fnorm = np.linalg.norm(face_vec)
+    if fnorm < 1e-10:
+        return []
+    face_vec = (face_vec / fnorm).reshape(1, -1)
+
+    ref_matrix = np.vstack([
+        DatabaseManager.feature_from_blob(r["feature"]).flatten().astype(np.float32)
+        for r in refs
+    ])
+    norms = np.linalg.norm(ref_matrix, axis=1, keepdims=True)
+    norms = np.maximum(norms, 1e-10)
+    ref_matrix = ref_matrix / norms
+
+    sim = (ref_matrix @ face_vec.T).flatten()
+    n = min(top_k, len(sim))
+    if n == 0:
+        return []
+    top_indices = np.argsort(sim)[::-1][:n]
+    return [(refs[i], float(sim[i])) for i in top_indices]
+
+
 class ReferenceMatchWorker(QThread):
     """
     后台参考库匹配：以 labeled_persons（已知特征）为标准，向量化计算与所有人脸的相似度，
