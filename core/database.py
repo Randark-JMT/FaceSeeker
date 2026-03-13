@@ -220,7 +220,10 @@ class DatabaseManager:
                     self.conn.commit()
                 return
         except Exception:
-            pass  # 表不存在则继续完整初始化
+            # 表不存在或查询失败时，必须 rollback 否则后续查询会报 InFailedSqlTransaction
+            with self._lock:
+                self.conn.rollback()
+            # 继续完整初始化
 
         self._execute(
             """
