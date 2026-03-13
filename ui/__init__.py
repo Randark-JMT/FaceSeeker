@@ -1,2 +1,2 @@
 APP_NAME = "FaceAtlas - 人脸识别系统"
-APP_VERSION = "v1.2.5"
+APP_VERSION = "v1.5.0"
